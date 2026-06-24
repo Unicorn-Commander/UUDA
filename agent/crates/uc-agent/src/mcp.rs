@@ -649,3 +649,130 @@ mod messages_mcp_tests {
         );
     }
 }
+
+// Full over-the-wire exercise: stands up the SAME MCP router server.rs serves
+// (StreamableHttpService + UudaServer) minus the TLS layer, on a real loopback
+// socket, and drives it with a real HTTP JSON-RPC client. Proves the genuinely
+// uncertain, transport-level contract the Customer-Ops federation client relies on
+// — that a BARE `tools/call` (no initialize/session handshake) routes to the tool
+// and returns its result — plus `tools/list` discovery and real chat.db data over
+// the wire. The mTLS handshake itself (stock rustls, see server.rs build_tls) is
+// the one layer not exercised here; it is validated at go-live against a
+// provisioned cert. macOS-only and self-skipping without a Messages database.
+#[cfg(all(test, target_os = "macos"))]
+mod messages_http_e2e_tests {
+    use super::*;
+    use axum::{routing::get, Json, Router};
+    use rmcp::transport::streamable_http_server::{
+        session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+    };
+    use tokio::net::TcpListener;
+
+    /// Build + serve the production MCP router (sans TLS) on an ephemeral loopback
+    /// port; returns its base URL. messages_enabled=true against the real chat.db.
+    async fn spawn_server() -> String {
+        let sampler = metrics::Sampler::new();
+        let db = messages::default_db_path();
+        let svc = StreamableHttpService::new(
+            move || {
+                Ok(UudaServer::new(
+                    sampler.clone(),
+                    "0.0.0-e2e".to_string(),
+                    std::env::temp_dir(),
+                    false,
+                    true,
+                    db.clone(),
+                ))
+            },
+            LocalSessionManager::default().into(),
+            // Mirror server.rs exactly: stateless + json so a bare tools/call works.
+            StreamableHttpServerConfig::default()
+                .with_stateful_mode(false)
+                .with_json_response(true)
+                .disable_allowed_hosts(),
+        );
+        let app = Router::new()
+            .route("/healthz", get(|| async { Json(serde_json::json!({"status": "ok"})) }))
+            .nest_service("/mcp/v1", svc);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind loopback");
+        let port = listener.local_addr().expect("addr").port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app.into_make_service()).await;
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    async fn wait_ready(base: &str) {
+        for _ in 0..100 {
+            if let Ok(r) = reqwest::get(format!("{base}/healthz")).await {
+                if r.status().is_success() {
+                    return;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("server never became ready at {base}");
+    }
+
+    /// JSON-RPC may arrive as plain JSON or a Streamable-HTTP SSE frame; parse both
+    /// (exactly like the Customer-Ops client's parseRpc).
+    fn parse_rpc(raw: &str) -> Value {
+        let t = raw.trim();
+        if let Ok(v) = serde_json::from_str::<Value>(t) {
+            return v;
+        }
+        let last = t
+            .lines()
+            .filter(|l| l.starts_with("data:"))
+            .map(|l| l[5..].trim())
+            .next_back()
+            .expect("an SSE data line");
+        serde_json::from_str(last).expect("SSE data is JSON")
+    }
+
+    async fn rpc(base: &str, method: &str, params: Value) -> Value {
+        let body = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+        let res = reqwest::Client::new()
+            .post(format!("{base}/mcp/v1"))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .json(&body)
+            .send()
+            .await
+            .expect("send");
+        assert!(res.status().is_success(), "HTTP {} from {method}", res.status());
+        parse_rpc(&res.text().await.expect("body"))
+    }
+
+    #[tokio::test]
+    async fn tools_list_advertises_the_message_tools() {
+        let base = spawn_server().await;
+        wait_ready(&base).await;
+        let env = rpc(&base, "tools/list", serde_json::json!({})).await;
+        let tools = env["result"]["tools"].as_array().expect("tools array");
+        let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+        for want in ["messages.list", "messages.thread", "messages.poll", "messages.send"] {
+            assert!(names.contains(&want), "{want} advertised; saw {names:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn bare_tools_call_returns_real_conversations_over_the_wire() {
+        if !messages::default_db_path().exists() {
+            eprintln!("skip: no chat.db");
+            return;
+        }
+        let base = spawn_server().await;
+        wait_ready(&base).await;
+        // NOTE: a bare tools/call with NO prior initialize — the exact shape the
+        // Customer-Ops client sends. If StreamableHTTP required a session this fails.
+        let env = rpc(&base, "tools/call", serde_json::json!({"name": "messages.list", "arguments": {"limit": 3}})).await;
+        let result = &env["result"];
+        assert!(result["isError"].as_bool() != Some(true), "tool error: {env}");
+        let text = result["content"][0]["text"].as_str().expect("content text");
+        let payload: Value = serde_json::from_str(text).expect("tool payload JSON");
+        let convs = payload["conversations"].as_array().expect("conversations array");
+        assert!(!convs.is_empty(), "expected real conversations over the wire");
+        assert!(convs.len() <= 3, "limit honored over the wire");
+    }
+}

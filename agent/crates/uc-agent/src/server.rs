@@ -50,7 +50,16 @@ pub async fn run(cfg: Arc<Config>, ip: Ipv4Addr, sampler: Sampler) -> Result<()>
             }
         },
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default().disable_allowed_hosts(),
+        // UUDA is a request/response tool surface — federation clients (Customer-Ops,
+        // Email-Ops, …) POST a bare `tools/call` with no `initialize`/session handshake.
+        // Stateful mode (the rmcp default) rejects that with 422 "expect initialize
+        // request", so the agent must run STATELESS. json_response also drops the SSE
+        // framing for plain `application/json` (MCP Streamable HTTP spec 2025-06-18).
+        // No tool needs server-push streaming; messages.poll is client-pull.
+        StreamableHttpServerConfig::default()
+            .with_stateful_mode(false)
+            .with_json_response(true)
+            .disable_allowed_hosts(),
     );
 
     let app = Router::new()
