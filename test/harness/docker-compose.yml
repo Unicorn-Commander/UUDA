@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# UUDA test harness. Brings up postgres + a minimal ops-center hosting the
+# real uuda.py router + a Linux container running the cross-compiled agent.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: uuda
+      POSTGRES_PASSWORD: uuda_test
+      POSTGRES_DB: uuda_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uuda -d uuda_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks:
+      uuda_test:
+
+  ops-center-mini:
+    build:
+      context: ./ops-center-mini
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: uuda
+      POSTGRES_PASSWORD: uuda_test
+      POSTGRES_DB: uuda_test
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../../control-plane/ops-center-patch/backend/routers/uuda.py:/app/routers/uuda.py:ro
+      - ../../control-plane/ops-center-patch/backend/sql:/app/sql:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz').read()"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    ports:
+      - "127.0.0.1:18084:8000"
+    networks:
+      uuda_test:
+
+  uc-agent-test:
+    build:
+      context: ./uc-agent-test
+    environment:
+      UC_AGENT_LISTEN_IP: "0.0.0.0"
+      UC_AGENT_HOSTNAME: "uuda-test-node-01"
+      UC_AGENT_BASE_URL: "http://ops-center-mini:8000"
+      UC_AGENT_TIER: "dev"
+      UC_AGENT_OWNER: "harness"
+      RUST_LOG: "info,uc_agent=debug,uc_toolkit=debug"
+    depends_on:
+      ops-center-mini:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:47000:47000"
+    networks:
+      uuda_test:
+        aliases:
+          - uuda-test-node-01
+
+networks:
+  uuda_test:
+    driver: bridge

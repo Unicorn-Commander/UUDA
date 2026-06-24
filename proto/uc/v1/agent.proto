@@ -1,0 +1,78 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// UUDA agent <-> control plane wire types: registration, heartbeat,
+// device facts. Identity bootstrap (Phase 1) is a single-use registration
+// token plus a CSR signed by the UUDA root.
+
+syntax = "proto3";
+
+package uc.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// DeviceTags carry the Phase-1 inventory dimensions. Phase 3 RBAC scopes
+// off these. Free-form `extra` lets ops-center attach product tags later
+// without a wire-format change.
+message DeviceTags {
+  // "prod" | "dev" | "endpoint"
+  string tier = 1;
+  // "infra" | "aaron" | "shafen" | future product/team values
+  string owner = 2;
+  // "linux" | "macos" — derived at register time, not editable
+  string os = 3;
+  map<string, string> extra = 4;
+}
+
+// DeviceFacts is the static-ish snapshot the agent sends on register and
+// re-asserts on heartbeat. Anything that can change at runtime (load,
+// memory, etc.) goes through the metrics path, not here.
+message DeviceFacts {
+  string hostname = 1;
+  string tailnet_ip = 2;
+  string os_release = 3;          // e.g. "Ubuntu 24.04.1 LTS"
+  string kernel = 4;              // e.g. "Linux 6.8.0-45-generic"
+  string arch = 5;                // "x86_64" | "aarch64"
+  string agent_version = 6;       // semver of uc-agent binary
+  uint32 mcp_port = 7;            // 47000 by default
+  google.protobuf.Timestamp boot_time = 8;
+}
+
+// RegisterRequest is the first thing an agent sends after install. The
+// `csr_pem` is a fresh PKCS#10 over a freshly generated Ed25519 key. The
+// `bootstrap_token` is single-use and scoped at issue time to a hostname,
+// tier, and owner.
+message RegisterRequest {
+  string bootstrap_token = 1;
+  string csr_pem = 2;
+  DeviceFacts facts = 3;
+  DeviceTags requested_tags = 4;  // ops-center authoritative; this is a hint
+}
+
+// RegisterResponse hands back the signed cert plus the lightweight bearer
+// used on the heartbeat hot path.
+message RegisterResponse {
+  string device_id = 1;             // server-assigned, ULID-shaped
+  string cert_pem = 2;              // signed by UUDA root
+  string ca_chain_pem = 3;          // root + any intermediates
+  string agent_key = 4;             // X-Agent-Key bearer for heartbeats
+  google.protobuf.Timestamp cert_not_after = 5;
+  DeviceTags tags = 6;              // authoritative tags after server review
+}
+
+// HeartbeatRequest is sent every 30s. Cheap, idempotent.
+message HeartbeatRequest {
+  string device_id = 1;
+  string agent_version = 2;
+  google.protobuf.Duration uptime = 3;
+  // Drift-detection seed: hash of current declared-config, optional in P1.
+  string declared_state_digest = 4;
+}
+
+// HeartbeatResponse can carry server-driven directives (e.g. "rotate cert
+// soon", "re-register"). Phase 1 only uses ack + clock-skew estimation.
+message HeartbeatResponse {
+  google.protobuf.Timestamp server_time = 1;
+  bool reregister_required = 2;
+  google.protobuf.Duration cert_rotate_in = 3;
+}

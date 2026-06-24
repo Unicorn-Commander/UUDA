@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[build]
+incremental = true
+
+[target.x86_64-unknown-linux-gnu]
+linker = "x86_64-linux-gnu-gcc"
+
+# When cross-compiling from macOS, prefer cargo-zigbuild:
+#   cargo install cargo-zigbuild
+#   cargo zigbuild --release --target x86_64-unknown-linux-gnu
+
+[net]
+git-fetch-with-cli = true

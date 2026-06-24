@@ -1,0 +1,44 @@
+# Rust
+agent/target/
+agent/Cargo.lock.bak
+**/*.rs.bk
+
+# Codegen output (regenerated)
+agent/crates/uc-types/src/generated/
+
+# Local state
+.env
+.env.*
+!.env.example
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Build artifacts
+dist/
+*.tar.gz
+*.tgz
+
+# Phase 1 spike (throwaway)
+agent/spike/
+
+# Cross-compiled binary staged into the test harness by smoke.sh (regenerated)
+test/harness/uc-agent-test/uc-agent
+
+# Local certs (never commit material)
+*.pem
+*.key
+*.crt
+!packaging/**/*.example.pem
+
+# Python (for control-plane patch tooling)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Notes
+PHASE1_NOTES_DRAFT.md

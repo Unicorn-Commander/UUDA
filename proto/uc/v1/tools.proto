@@ -1,0 +1,345 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// UUDA Phase 1 tool surface. Five tools, typed inputs and outputs, shared
+// envelope (ToolMeta + ChangeSet + Error). Wire format on MCP is JSON;
+// these protos are the canonical schema and Rust + Python types are
+// generated from them.
+
+syntax = "proto3";
+
+package uc.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+import "uc/v1/errors.proto";
+
+// ToolMeta is included on every request. dry_run defaults true at the
+// gateway for any tool that mutates; the agent re-checks. timeout is
+// advisory; the agent enforces a hard cap regardless.
+message ToolMeta {
+  string request_id = 1;
+  bool dry_run = 2;
+  google.protobuf.Duration timeout = 3;
+}
+
+// Change is one delta entry inside a ChangeSet. `kind` is dot-namespaced
+// (e.g. "package.install", "service.start"). before/after are
+// human-readable, not parsed.
+message Change {
+  string kind = 1;
+  string target = 2;
+  string before = 3;
+  string after = 4;
+}
+
+// ChangeSet is the canonical return shape for any mutating tool, whether
+// dry-run or applied. `applied=false` always for dry-run.
+message ChangeSet {
+  repeated Change changes = 1;
+  bool applied = 2;
+}
+
+// ----------------------------------------------------------------------
+// system.health
+// ----------------------------------------------------------------------
+
+message HealthRequest {
+  ToolMeta meta = 1;
+}
+
+message Load {
+  double one = 1;
+  double five = 2;
+  double fifteen = 3;
+}
+
+message Memory {
+  uint64 total_bytes = 1;
+  uint64 used_bytes = 2;
+  uint64 available_bytes = 3;
+  uint64 swap_total_bytes = 4;
+  uint64 swap_used_bytes = 5;
+}
+
+message DiskUsage {
+  string mountpoint = 1;
+  string filesystem = 2;
+  uint64 total_bytes = 3;
+  uint64 used_bytes = 4;
+  uint64 available_bytes = 5;
+}
+
+message HealthResponse {
+  google.protobuf.Duration uptime = 1;
+  Load load = 2;
+  Memory memory = 3;
+  repeated DiskUsage disks = 4;
+  optional double cpu_temp_celsius = 5;
+  string agent_version = 6;
+  string os = 7;
+  string kernel = 8;
+  Error error = 9;             // unset on success
+}
+
+// ----------------------------------------------------------------------
+// system.metrics
+// ----------------------------------------------------------------------
+
+message MetricsRequest {
+  ToolMeta meta = 1;
+  google.protobuf.Duration window = 2;
+  // Soft cap on series count; agent clamps to MAX_SERIES_HARD (500).
+  // Default if zero or unset: 100.
+  uint32 max_series = 3;
+}
+
+message MetricPoint {
+  google.protobuf.Timestamp at = 1;
+  double value = 2;
+}
+
+message MetricSeries {
+  string name = 1;             // Prometheus-style: "cpu.user", "mem.used_bytes"
+  string unit = 2;             // "ratio" | "bytes" | "bytes_per_second" | "celsius"
+  map<string, string> labels = 3;
+  repeated MetricPoint points = 4;
+}
+
+message MetricsResponse {
+  google.protobuf.Timestamp window_start = 1;
+  google.protobuf.Timestamp window_end = 2;
+  repeated MetricSeries series = 3;
+  bool truncated = 4;
+  Error error = 5;
+}
+
+// ----------------------------------------------------------------------
+// system.logs
+// ----------------------------------------------------------------------
+
+message LogEntry {
+  google.protobuf.Timestamp at = 1;
+  string level = 2;            // "trace" | "debug" | "info" | "warn" | "error"
+  string message = 3;
+  map<string, string> fields = 4;
+}
+
+message LogsRequest {
+  ToolMeta meta = 1;
+  string service = 2;          // unit name on linux, subsystem on macOS
+  google.protobuf.Timestamp since = 3;
+  uint32 max_lines = 4;        // hard-capped at 10_000 by agent
+}
+
+message LogsResponse {
+  repeated LogEntry entries = 1;
+  bool truncated = 2;
+  Error error = 3;
+}
+
+// ----------------------------------------------------------------------
+// package.install
+// ----------------------------------------------------------------------
+
+enum PackageBackendKind {
+  PACKAGE_BACKEND_KIND_AUTO = 0;
+  PACKAGE_BACKEND_KIND_BREW = 1;
+  PACKAGE_BACKEND_KIND_APT = 2;
+  // Phase 2: DNF, PACMAN, WINGET
+}
+
+message PackageInstallRequest {
+  ToolMeta meta = 1;
+  string name = 2;
+  optional string version = 3;
+  PackageBackendKind backend = 4;
+}
+
+message PackageInstallResponse {
+  ChangeSet change_set = 1;
+  PackageBackendKind backend_used = 2;
+  optional string installed_version = 3;
+  string stdout_tail = 4;      // last ~4 KB of backend output
+  string stderr_tail = 5;
+  Error error = 6;
+}
+
+// ----------------------------------------------------------------------
+// service.status
+// ----------------------------------------------------------------------
+
+enum ServiceState {
+  SERVICE_STATE_UNKNOWN = 0;
+  SERVICE_STATE_ACTIVE = 1;
+  SERVICE_STATE_INACTIVE = 2;
+  SERVICE_STATE_FAILED = 3;
+  SERVICE_STATE_ACTIVATING = 4;
+  SERVICE_STATE_DEACTIVATING = 5;
+}
+
+message ServiceStatusRequest {
+  ToolMeta meta = 1;
+  string name = 2;             // e.g. "nginx", "uc-agent"
+}
+
+message ServiceStatusResponse {
+  string name = 1;
+  bool exists = 2;
+  ServiceState state = 3;
+  bool enabled = 4;
+  optional google.protobuf.Timestamp since = 5;
+  optional uint32 pid = 6;
+  repeated LogEntry recent_logs = 7;   // last 20 lines, same shape as system.logs
+  Error error = 8;
+}
+
+// ----------------------------------------------------------------------
+// agent.brief / agent.report  (Phase 2 Squad-mode seam)
+//
+// uc-agent doesn't run an LLM. Squad mode means a separate on-device
+// LLM agent (e.g. LtCol Katie running in Unicorn Squad) consumes Brigade
+// briefings and produces reports. uc-agent acts as the durable relay:
+// Brigade calls agent.brief to push a new briefing, the agent persists
+// it to disk, the local LLM picks it up out-of-band. agent.report reads
+// the local LLM's last status back to Brigade.
+//
+// Phase 1.5 implements only the persistence (write briefing to a file,
+// read it back). Squad consumption / production lives in Squad, not
+// uc-agent.
+// ----------------------------------------------------------------------
+
+message Brief {
+  string version = 1;
+  string system_prompt = 2;
+  map<string, string> context = 3;
+  repeated BriefTask tasks = 4;
+  google.protobuf.Timestamp issued_at = 5;
+  string issued_by = 6;        // "ltcol_katie" | operator id | "the_general"
+}
+
+message BriefTask {
+  string id = 1;
+  string description = 2;
+  optional google.protobuf.Timestamp deadline = 3;
+}
+
+message AgentBriefRequest {
+  ToolMeta meta = 1;
+  Brief brief = 2;
+}
+
+message AgentBriefResponse {
+  string acknowledged_version = 1;
+  google.protobuf.Timestamp received_at = 2;
+  Error error = 3;
+}
+
+message AgentReportRequest {
+  ToolMeta meta = 1;
+}
+
+message TaskStatus {
+  string task_id = 1;
+  string status = 2;            // "pending" | "in_progress" | "done" | "failed" | "skipped"
+  string note = 3;
+  optional google.protobuf.Timestamp updated_at = 4;
+}
+
+message Anomaly {
+  google.protobuf.Timestamp at = 1;
+  string category = 2;          // "drift" | "error" | "warn" | "info"
+  string description = 3;
+}
+
+message AgentReportResponse {
+  // Empty when the device has no on-device agent (`has_local_agent=false`)
+  // or no briefing has ever been received.
+  string current_brief_version = 1;
+  optional google.protobuf.Timestamp last_brief_at = 2;
+  repeated TaskStatus task_statuses = 3;
+  repeated Anomaly anomalies = 4;
+  string summary = 5;            // free-form short status
+  bool has_local_agent = 6;
+  Error error = 7;
+}
+
+// ----------------------------------------------------------------------
+// messages.list / messages.thread / messages.poll / messages.send
+//
+// On-device bridge to the macOS Messages app — iMessage and SMS-via-Continuity.
+// Reads come from the local ~/Library/Messages/chat.db opened read-only and
+// immutable (never locks or mutates the live database). Sends go out through
+// AppleScript to Messages.app. macOS only; other platforms return a Backend
+// error. messages.send is a mutating tool: dry_run defaults true at the gateway
+// and the response carries a ChangeSet (applied=false on dry-run).
+// ----------------------------------------------------------------------
+
+// One message inside a conversation. `rowid` is the chat.db message ROWID,
+// monotonic and used as the messages.poll cursor.
+message ChatMessage {
+  int64 rowid = 1;
+  google.protobuf.Timestamp at = 2;
+  bool from_me = 3;
+  string sender = 4;             // other party's handle (phone/email); empty when from_me
+  string text = 5;               // decoded body (text column, else attributedBody)
+  string service = 6;            // "iMessage" | "SMS"
+  bool has_attachments = 7;
+}
+
+// A conversation (1:1 or group) summarised by its most-recent message.
+message Conversation {
+  int64 chat_rowid = 1;
+  string chat_identifier = 2;    // phone/email (1:1) or group chat guid
+  string display_name = 3;       // group name; may be empty
+  string service = 4;            // "iMessage" | "SMS"
+  bool is_group = 5;
+  ChatMessage last_message = 6;
+  google.protobuf.Timestamp last_activity = 7;
+}
+
+message MessagesListRequest {
+  ToolMeta meta = 1;
+  uint32 limit = 2;              // max conversations; default 20, hard cap 200
+}
+
+message MessagesListResponse {
+  repeated Conversation conversations = 1;
+  Error error = 2;
+}
+
+message MessagesThreadRequest {
+  ToolMeta meta = 1;
+  string chat_identifier = 2;    // the conversation to read
+  uint32 limit = 3;              // max messages; default 50, hard cap 500
+}
+
+message MessagesThreadResponse {
+  repeated ChatMessage messages = 1;   // chronological, oldest -> newest
+  Error error = 2;
+}
+
+message MessagesPollRequest {
+  ToolMeta meta = 1;
+  int64 since_rowid = 2;         // return messages with ROWID > this; 0 = recent tail
+  uint32 limit = 3;              // default 100, hard cap 1000
+}
+
+message MessagesPollResponse {
+  repeated ChatMessage messages = 1;   // ascending ROWID
+  int64 max_rowid = 2;           // new cursor: pass back as since_rowid next poll
+  Error error = 3;
+}
+
+message MessageSendRequest {
+  ToolMeta meta = 1;             // dry_run honored
+  string to = 2;                 // handle (phone/email) or chat identifier
+  string body = 3;
+  string service = 4;            // "iMessage" | "SMS" | "" (auto)
+}
+
+message MessageSendResponse {
+  ChangeSet change_set = 1;
+  string service_used = 2;
+  Error error = 3;
+}

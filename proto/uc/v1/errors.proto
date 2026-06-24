@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// UUDA error envelope. Every tool that can fail returns one of these
+// instead of a free-form string. Codes are stable; messages and details
+// are advisory.
+
+syntax = "proto3";
+
+package uc.v1;
+
+// ErrorCategory groups codes for client-side handling. Adding new codes
+// is backward compatible. Removing or renumbering categories is not.
+enum ErrorCategory {
+  ERROR_CATEGORY_UNSPECIFIED = 0;
+
+  // The request was malformed or referenced something that doesn't exist.
+  ERROR_CATEGORY_INVALID_INPUT = 1;
+
+  // The actor is not allowed to perform this action under current policy.
+  ERROR_CATEGORY_PERMISSION_DENIED = 2;
+
+  // A backend (package manager, service manager, journald) returned an error.
+  ERROR_CATEGORY_BACKEND = 3;
+
+  // Resource limits hit (rate limit, max_series cap, timeout).
+  ERROR_CATEGORY_RESOURCE = 4;
+
+  // Internal agent failure. Operator action: file a bug.
+  ERROR_CATEGORY_INTERNAL = 5;
+}
+
+// Error is the typed failure envelope. `code` is a dot-namespaced string
+// like "package.not_found" or "service.unit_missing".
+message Error {
+  ErrorCategory category = 1;
+  string code = 2;
+  string message = 3;
+  map<string, string> details = 4;
+}

@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "uc-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "UUDA per-device agent: registers with the control plane and exposes a typed MCP tool surface over mTLS on the tailnet."
+default-run = "uc-agent"
+
+[[bin]]
+name = "uc-agent"
+path = "src/main.rs"
+
+[dependencies]
+uc-types = { workspace = true }
+uc-toolkit = { workspace = true }
+
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+
+axum = { workspace = true }
+axum-server = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+hyper = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+rustls-webpki = "0.103"
+tokio-rustls = { workspace = true }
+reqwest = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+prost = { workspace = true }
+
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+rcgen = { workspace = true }
+ring = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+x509-parser = { workspace = true }
+rustls-pki-types = { workspace = true }
+
+rmcp = { workspace = true }
+schemars = { workspace = true }
+
+time = { workspace = true }
+uuid = { workspace = true }
+humantime-serde = { workspace = true }
+sysinfo = { workspace = true }

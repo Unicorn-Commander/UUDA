@@ -1,0 +1,20 @@
+# Rendered into /etc/uc-agent/config.toml by entrypoint.sh after the
+# bootstrap token is fetched from ops-center-mini.
+
+[agent]
+mcp_port = 47000
+heartbeat_interval = "5s"
+register_timeout = "10s"
+
+[control_plane]
+base_url = "{{BASE_URL}}"
+tls_skip_verify = false
+
+[paths]
+state_dir = "/var/lib/uc-agent"
+cert_dir = "/var/lib/uc-agent/certs"
+
+[bootstrap]
+token = "{{TOKEN}}"
+tier = "{{TIER}}"
+owner = "{{OWNER}}"

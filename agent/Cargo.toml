@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/uc-types",
+    "crates/uc-toolkit",
+    "crates/uc-agent",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+authors = ["Magic Unicorn Tech <hello@magicunicorn.tech>"]
+homepage = "https://unicorncommander.ai"
+repository = "https://git.unicorncommander.ai/unicorn-commander/uuda"
+
+[workspace.dependencies]
+# Async
+tokio = { version = "1.43", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# HTTP server / TLS
+axum = { version = "0.7", features = ["macros"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+hyper = { version = "1.5", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "timeout", "limit"] }
+rustls = "0.23"
+rustls-pemfile = "2"
+tokio-rustls = "0.26"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+
+# Serde / JSON
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Proto
+prost = "0.13"
+prost-types = "0.13"
+prost-build = "0.13"
+pbjson = "0.7"
+pbjson-types = "0.7"
+pbjson-build = "0.7"
+
+# Errors / observability
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Crypto / certs
+rcgen = { version = "0.13", features = ["pem"] }
+ring = "0.17"
+sha2 = "0.10"
+base64 = "0.22"
+x509-parser = "0.16"
+rustls-pki-types = "1"
+
+# MCP
+rmcp = { version = "1.5", features = ["server", "transport-streamable-http-server", "transport-streamable-http-server-session", "macros", "schemars"] }
+schemars = "1"
+
+# Time / IDs
+time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+humantime-serde = "1"
+
+# System info
+sysinfo = "0.32"
+nix = { version = "0.29", features = ["fs", "user", "signal"] }
+
+# Local data (macOS Messages bridge reads chat.db)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Local crates
+uc-types = { path = "crates/uc-types", version = "0.1.0" }
+uc-toolkit = { path = "crates/uc-toolkit", version = "0.1.0" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+opt-level = 3
+panic = "abort"
+
+[profile.release-debug]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"

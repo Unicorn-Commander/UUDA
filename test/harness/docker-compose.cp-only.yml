@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Control-plane-only stack for the macOS local canary: postgres +
+# ops-center-mini, no uc-agent-test container. The native macOS binary
+# runs on the host and talks to ops-center-mini at 127.0.0.1:18084.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: uuda
+      POSTGRES_PASSWORD: uuda_test
+      POSTGRES_DB: uuda_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uuda -d uuda_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks:
+      uuda_test:
+
+  ops-center-mini:
+    build:
+      context: ./ops-center-mini
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: uuda
+      POSTGRES_PASSWORD: uuda_test
+      POSTGRES_DB: uuda_test
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../../control-plane/ops-center-patch/backend/routers/uuda.py:/app/routers/uuda.py:ro
+      - ../../control-plane/ops-center-patch/backend/sql:/app/sql:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz').read()"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    ports:
+      - "127.0.0.1:18084:8000"
+    networks:
+      uuda_test:
+
+networks:
+  uuda_test:
+    driver: bridge

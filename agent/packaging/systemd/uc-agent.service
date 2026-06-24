@@ -1,0 +1,32 @@
+[Unit]
+Description=UUDA device agent (uc-agent)
+Documentation=https://git.unicorncommander.ai/UnicornCommander/UUDA
+After=network-online.target tailscaled.service
+Wants=network-online.target
+Requires=tailscaled.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/libexec/uc-agent
+Environment=UC_AGENT_CONFIG=/etc/uc-agent/config.toml
+Environment=RUST_LOG=info
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+StateDirectory=uc-agent
+ConfigurationDirectory=uc-agent
+StateDirectoryMode=0750
+ConfigurationDirectoryMode=0750
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/uc-agent
+
+[Install]
+WantedBy=multi-user.target
