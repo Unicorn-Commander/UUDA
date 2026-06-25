@@ -5,6 +5,10 @@
 mcp_port = 47000
 heartbeat_interval = "5s"
 register_timeout = "10s"
+# Squad mode: agent.report reads the brief store back, so the harness can verify
+# an agent.brief mutation actually landed (the brief round-trip). A headless
+# server would leave this false; a workstation runs squad mode.
+has_local_agent = true
 
 [control_plane]
 base_url = "{{BASE_URL}}"

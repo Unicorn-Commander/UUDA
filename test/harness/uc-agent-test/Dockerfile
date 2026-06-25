@@ -5,7 +5,7 @@
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl jq sudo systemd-coredump \
+    ca-certificates curl jq sudo systemd-coredump iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN install -d -m 0750 /etc/uc-agent /var/lib/uc-agent /var/lib/uc-agent/certs \

@@ -31,7 +31,15 @@ services:
       postgres:
         condition: service_healthy
     volumes:
+      # Mount the FULL governed control plane (not just Phase-1 uuda.py) so the
+      # harness drives the real gateway -> agent loop end to end.
       - ../../control-plane/ops-center-patch/backend/routers/uuda.py:/app/routers/uuda.py:ro
+      - ../../control-plane/ops-center-patch/backend/routers/uuda_gateway.py:/app/routers/uuda_gateway.py:ro
+      - ../../control-plane/ops-center-patch/backend/routers/uuda_policy.py:/app/routers/uuda_policy.py:ro
+      - ../../control-plane/ops-center-patch/backend/routers/uuda_tenancy.py:/app/routers/uuda_tenancy.py:ro
+      - ../../control-plane/ops-center-patch/backend/routers/uuda_mcp.py:/app/routers/uuda_mcp.py:ro
+      - ../../control-plane/ops-center-patch/backend/routers/uuda_drift.py:/app/routers/uuda_drift.py:ro
+      - ../../control-plane/ops-center-patch/backend/routers/uuda_drift_api.py:/app/routers/uuda_drift_api.py:ro
       - ../../control-plane/ops-center-patch/backend/sql:/app/sql:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz').read()"]
