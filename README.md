@@ -23,6 +23,32 @@ Magic Unicorn already owns the adjacent layers (Tailscale mesh, Brigade agents, 
 
 ## Status
 
+**2026-06-25 — v0.2.0. The full stack is built and PROVEN LIVE end to end.**
+Phases 1 → 5 are implemented across the agent (`uc-agent`) and control plane
+(`uc-control`, mounted into ops-center): registration + mTLS + the typed tool
+surface, the **MCP gateway** (a CA-trusted client cert drives a stateless
+`tools/call` to any device, plus bounded fan-out), the **policy engine** (per-tool
+classes, dry-run-by-default, RBAC grants, an approval queue with separation of
+duties), **multi-tenancy** (opt-in org fence for MSP "manage many fleets"), and
+**drift detection** (declared desired-state → observe → governed remediation
+through the same approval chokepoint). Brigade's `Maj. DevOps` persona drives it
+all as the fleet officer.
+
+A full-stack harness (`test/harness/smoke-full.sh`) stands up postgres + the real
+control-plane routers + the real Rust agent and drives the **entire governed loop
+against the live agent over HTTP + mTLS** — 18 asserted checks, green and
+deterministic: discovery, read, the dry-run hardening, the policy chokepoint, the
+approval workflow incl. separation of duties, effect verification, drift
+detection, governed remediation, the closed loop, and the autonomy dial. The live
+run also caught and fixed three real gateway bugs that unit tests had missed.
+
+Everything is built, unit-tested (88 control-plane + 15 Brigade), proven E2E, and
+pushed. **The only remaining work is the go-live** (deploy): mount the routers
+into ops-center, apply SQL `001–005`, set `UUDA_GATEWAY_URL`, provision the fleet
+officer's auth, and run certs + the daemon on real devices. See
+`control-plane/ops-center-patch/README.md` for the runbook and `CHANGELOG.md` for
+the full history.
+
 **2026-04-25** — Project bootstrapped. Design docs in `docs/`. Decisions locked: name = UUDA. License = open-core (Apache 2.0 agent, proprietary control plane). Implementation tooling = Claude Code primary, Brigade `code-reviewer` for parallel review.
 
 **2026-04-26** — Phase 1 in flight. Repo: `https://git.unicorncommander.ai/UnicornCommander/UUDA`. Workspace skeleton compiling, proto contracts complete, uc-types crate building clean. Architecture extended with two-mode (headless/Squad) design and LtCol officer model. Currently working: register/heartbeat, MCP library spike, the 5 Phase-1 tools.

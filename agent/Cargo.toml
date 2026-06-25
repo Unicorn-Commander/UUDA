@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -79,8 +79,8 @@ nix = { version = "0.29", features = ["fs", "user", "signal"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Local crates
-uc-types = { path = "crates/uc-types", version = "0.1.0" }
-uc-toolkit = { path = "crates/uc-toolkit", version = "0.1.0" }
+uc-types = { path = "crates/uc-types", version = "0.2.0" }
+uc-toolkit = { path = "crates/uc-toolkit", version = "0.2.0" }
 
 [profile.release]
 lto = "thin"
