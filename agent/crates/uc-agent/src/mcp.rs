@@ -11,7 +11,10 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use uc_toolkit::{brief as briefmod, files, health, logs, messages, metrics, package, service};
+use uc_toolkit::{
+    brief as briefmod, containers, exec, files, health, logs, messages, metrics, package, service,
+    smart, updates, zfs,
+};
 
 #[derive(Clone)]
 pub struct UudaServer {
@@ -210,6 +213,47 @@ pub struct FilesIndexIn {
 
 #[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct FilesStatusIn {}
+
+// ---- fleet-health probes ---------------------------------------------------
+
+#[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct DiskSmartIn {
+    /// Specific devices to read (e.g. ["/dev/sdc"]). Empty enumerates every
+    /// physical disk via `smartctl --scan` / `lsblk`.
+    #[serde(default)]
+    pub devices: Vec<String>,
+    /// Per-command deadline in seconds. 0 means the default (20), capped at 300.
+    #[serde(default)]
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct ZfsStatusIn {
+    /// Per-command deadline in seconds. 0 means the default (20), capped at 300.
+    #[serde(default)]
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct UpdateStatusIn {
+    /// Per-command deadline in seconds. 0 means the default (20), capped at 300.
+    #[serde(default)]
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct ContainerImagesIn {
+    /// Flag a container whose image was built more than this many days ago.
+    /// 0 means the default (90).
+    #[serde(default)]
+    pub stale_after_days: u32,
+    /// Flag a container whose restart count exceeds this. 0 means default (5).
+    #[serde(default)]
+    pub restart_threshold: u32,
+    /// Per-command deadline in seconds. 0 means the default (20), capped at 300.
+    #[serde(default)]
+    pub timeout_secs: u64,
+}
 
 #[tool_router]
 impl UudaServer {
@@ -513,6 +557,79 @@ impl UudaServer {
         let enabled = self.files_enabled;
         run_blocking(move || index.status(&roots, enabled)).await
     }
+
+    #[tool(
+        name = "disk.smart",
+        description = "Per-physical-disk SMART RAW counters: reallocated/pending/offline-uncorrectable sectors, UDMA CRC errors, power-on hours, and the NVMe health log. Status is computed from the RAW numbers ONLY and never from the overall PASSED/FAILED verdict — a disk can report PASSED with thousands of pending sectors. Read-only, time-bounded. Linux only; returns smartctl_available=false elsewhere."
+    )]
+    async fn disk_smart(
+        &self,
+        Parameters(args): Parameters<DiskSmartIn>,
+    ) -> Result<CallToolResult, McpError> {
+        let opts = smart::SmartOptions {
+            devices: args.devices,
+            timeout: Some(exec::clamp_timeout(args.timeout_secs)),
+        };
+        match smart::collect(opts).await {
+            Ok(resp) => json_response(&resp),
+            Err(e) => Ok(error_result(e)),
+        }
+    }
+
+    #[tool(
+        name = "zfs.status",
+        description = "ZFS pool health: per-pool capacity, per-vdev/per-device READ/WRITE/CKSUM error counts, scrub state, and an explicit `suspended` flag (distinct from DEGRADED). STRICTLY READ-ONLY — runs only `zpool list` and `zpool status`, never scrub/clear/online/offline/replace/import/export and never `-w`. Returns zfs_available=false when ZFS is not installed."
+    )]
+    async fn zfs_status(
+        &self,
+        Parameters(args): Parameters<ZfsStatusIn>,
+    ) -> Result<CallToolResult, McpError> {
+        match zfs::collect(Some(exec::clamp_timeout(args.timeout_secs))).await {
+            Ok(resp) => json_response(&resp),
+            Err(e) => Ok(error_result(e)),
+        }
+    }
+
+    #[tool(
+        name = "update.status",
+        description = "apt currency and whether the update machinery is wedged: age of the last successful apt update, upgradable and security-update counts, last unattended-upgrades outcome, who holds the dpkg frontend lock AND FOR HOW LONG, the count of processes in D (uninterruptible) state with cmdlines, reboot-required, and held packages (informational — GPU nodes pin nvidia/kernel deliberately). Read-only. Debian/Ubuntu only; returns apt_available=false elsewhere."
+    )]
+    async fn update_status(
+        &self,
+        Parameters(args): Parameters<UpdateStatusIn>,
+    ) -> Result<CallToolResult, McpError> {
+        match updates::collect(Some(exec::clamp_timeout(args.timeout_secs))).await {
+            Ok(resp) => json_response(&resp),
+            Err(e) => Ok(error_result(e)),
+        }
+    }
+
+    #[tool(
+        name = "container.images",
+        description = "Running Docker containers: name, image reference and digest, image and container age, restart policy, restart count and health status. Flags unpinnable references (:latest or no tag), crash-looping containers, and images older than stale_after_days (default 90). LOCAL INSPECTION ONLY — never contacts a registry, so it cannot tell you an image is behind upstream. Read-only, no root required; returns docker_available=false when the socket is absent or unreadable."
+    )]
+    async fn container_images(
+        &self,
+        Parameters(args): Parameters<ContainerImagesIn>,
+    ) -> Result<CallToolResult, McpError> {
+        let opts = containers::ContainerOptions {
+            stale_after_days: if args.stale_after_days == 0 {
+                containers::DEFAULT_STALE_AFTER_DAYS
+            } else {
+                args.stale_after_days
+            },
+            restart_threshold: if args.restart_threshold == 0 {
+                containers::DEFAULT_RESTART_THRESHOLD
+            } else {
+                args.restart_threshold
+            },
+            timeout: Some(exec::clamp_timeout(args.timeout_secs)),
+        };
+        match containers::collect(opts).await {
+            Ok(resp) => json_response(&resp),
+            Err(e) => Ok(error_result(e)),
+        }
+    }
 }
 
 #[tool_handler]
@@ -524,7 +641,7 @@ impl ServerHandler for UudaServer {
         .with_server_info(Implementation::from_build_env())
         .with_protocol_version(ProtocolVersion::V_2024_11_05)
         .with_instructions(
-            "UUDA per-device agent. Tools: system.health, system.metrics, system.logs, package.install, service.status. macOS Messages bridge (when enabled): messages.list, messages.thread, messages.poll, messages.send. File index (when enabled): files.search, files.index, files.status."
+            "UUDA per-device agent. Tools: system.health, system.metrics, system.logs, package.install, service.status. Fleet-health probes (read-only): disk.smart, zfs.status, update.status, container.images. macOS Messages bridge (when enabled): messages.list, messages.thread, messages.poll, messages.send. File index (when enabled): files.search, files.index, files.status."
                 .to_string(),
         )
     }
@@ -579,6 +696,155 @@ fn _ctx_unused(_: RequestContext<RoleServer>) {}
 
 #[allow(dead_code)]
 fn _arc_marker(_: Arc<()>) {}
+
+// Exercise the fleet-health probes through the actual `#[tool]` methods on a
+// constructed UudaServer, rather than calling the toolkit parsers directly.
+// This proves the three things unit tests cannot: that each tool is registered
+// on the router under the exact name the drift engine calls, that it returns a
+// successful (non-error) CallToolResult even when the underlying host tool is
+// absent, and that the JSON payload carries the top-level keys the drift engine
+// addresses into. Cross-platform on purpose — on macOS every probe takes its
+// "not available here" path, which is precisely the path that must not error.
+#[cfg(test)]
+mod health_probe_mcp_tests {
+    use super::*;
+
+    fn server() -> UudaServer {
+        UudaServer::new(
+            metrics::Sampler::new(),
+            "0.0.0-test".to_string(),
+            std::env::temp_dir(),
+            false,
+            false,
+            std::env::temp_dir().join("uuda-test-chat.db"),
+            false,
+            Vec::new(),
+            std::env::temp_dir().join("uuda-test-files-index.db"),
+        )
+    }
+
+    fn wire(r: &CallToolResult) -> Value {
+        serde_json::to_value(r).expect("serialize CallToolResult")
+    }
+
+    fn is_error(v: &Value) -> bool {
+        v.get("isError").and_then(Value::as_bool).unwrap_or(false)
+    }
+
+    fn payload(v: &Value) -> Value {
+        let text = v["content"][0]["text"].as_str().expect("text content block");
+        serde_json::from_str(text).expect("content text is JSON")
+    }
+
+    /// A short deadline so a probe on a real Linux host cannot slow the suite.
+    const T: u64 = 5;
+
+    #[test]
+    fn all_four_probes_are_registered_under_their_documented_names() {
+        let names: Vec<String> = UudaServer::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        for want in [
+            "disk.smart",
+            "zfs.status",
+            "update.status",
+            "container.images",
+        ] {
+            assert!(names.contains(&want.to_string()), "{want} advertised; saw {names:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn disk_smart_returns_a_well_formed_payload_even_without_smartctl() {
+        let v = wire(
+            &server()
+                .disk_smart(Parameters(DiskSmartIn {
+                    devices: Vec::new(),
+                    timeout_secs: T,
+                }))
+                .await
+                .expect("tool call"),
+        );
+        assert!(!is_error(&v), "a missing smartctl must not be an error: {v}");
+        let p = payload(&v);
+        assert!(
+            p["smartctl_available"].is_boolean(),
+            "smartctl_available is always present: {p}"
+        );
+        assert!(p["disks"].is_array(), "disks[] is always an array: {p}");
+        // The drift engine addresses disks[].pending_sectors; prove the field
+        // exists on every emitted disk when there are any.
+        for disk in p["disks"].as_array().unwrap() {
+            assert!(disk.get("pending_sectors").is_some());
+            assert!(disk.get("offline_uncorrectable").is_some());
+            assert!(disk["status"].is_string());
+        }
+    }
+
+    #[tokio::test]
+    async fn zfs_status_returns_a_well_formed_payload_even_without_zfs() {
+        let v = wire(
+            &server()
+                .zfs_status(Parameters(ZfsStatusIn { timeout_secs: T }))
+                .await
+                .expect("tool call"),
+        );
+        assert!(!is_error(&v), "a missing zpool must not be an error: {v}");
+        let p = payload(&v);
+        assert!(p["zfs_available"].is_boolean());
+        assert!(p["pools"].is_array());
+        assert!(
+            p["any_suspended"].is_boolean(),
+            "the SUSPENDED alarm bit is always present: {p}"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_status_returns_a_well_formed_payload_off_debian() {
+        let v = wire(
+            &server()
+                .update_status(Parameters(UpdateStatusIn { timeout_secs: T }))
+                .await
+                .expect("tool call"),
+        );
+        assert!(!is_error(&v), "a non-apt host must not be an error: {v}");
+        let p = payload(&v);
+        assert!(p["apt_available"].is_boolean());
+        assert!(p["uninterruptible_count"].is_number());
+        assert!(p["dpkg_lock_held"].is_boolean());
+        assert!(p["uninterruptible_processes"].is_array());
+    }
+
+    #[tokio::test]
+    async fn container_images_returns_a_well_formed_payload_without_docker() {
+        let v = wire(
+            &server()
+                .container_images(Parameters(ContainerImagesIn {
+                    stale_after_days: 0,
+                    restart_threshold: 0,
+                    timeout_secs: T,
+                }))
+                .await
+                .expect("tool call"),
+        );
+        assert!(!is_error(&v), "an absent docker socket must not error: {v}");
+        let p = payload(&v);
+        assert!(p["docker_available"].is_boolean());
+        assert!(p["containers"].is_array());
+        assert_eq!(
+            p["stale_after_days"].as_u64(),
+            Some(uc_toolkit::containers::DEFAULT_STALE_AFTER_DAYS as u64),
+            "0 in the args means the documented default, not a 0-day threshold"
+        );
+        assert_eq!(
+            p["registry_checked"].as_bool(),
+            Some(false),
+            "the tool must always declare that it contacted no registry"
+        );
+    }
+}
 
 // In-process exercise of the MCP tool layer against the real chat.db. Unlike the
 // uc-toolkit unit tests (which call the readers directly), these drive the actual
