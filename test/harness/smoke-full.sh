@@ -23,7 +23,12 @@ case "$(uname -m)" in
     x86_64|amd64)  HARNESS_TARGET="x86_64-unknown-linux-gnu" ;;
     *) echo "unsupported host arch: $(uname -m)" >&2; exit 1 ;;
 esac
-LINUX_BIN="$REPO_ROOT/agent/target/$HARNESS_TARGET/release/uc-agent"
+# See smoke.sh: a global cargo target-dir override relocates the build, so ask
+# cargo rather than assuming agent/target/.
+CARGO_TARGET_ROOT="$(cd "$REPO_ROOT/agent" && cargo metadata --format-version 1 --no-deps 2>/dev/null \
+    | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
+[ -n "$CARGO_TARGET_ROOT" ] || CARGO_TARGET_ROOT="$REPO_ROOT/agent/target"
+LINUX_BIN="$CARGO_TARGET_ROOT/$HARNESS_TARGET/release/uc-agent"
 STAGED_BIN="$HARNESS_DIR/uc-agent-test/uc-agent"
 COMPOSE=(docker compose --project-name uuda-harness)
 OPS_URL="http://127.0.0.1:18084"
