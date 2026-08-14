@@ -559,11 +559,20 @@ fn collect_lock_state(res: &mut UpdateStatusResult, uptime: f64) {
     }
 
     res.dpkg_lock_held = !res.dpkg_lock_holders.is_empty();
-    res.dpkg_lock_held_secs = res
-        .dpkg_lock_holders
-        .iter()
-        .filter_map(|h| h.held_for_secs)
-        .max();
+    // Report 0 rather than null when nothing holds the lock. A drift check
+    // naturally reads `dpkg_lock_held_secs <= 1800`, and a null there is not a
+    // number, so the check errors on every healthy host -- which is precisely
+    // the host where it must quietly pass. "Held for 0 seconds" is also just
+    // true. Null is reserved for "the lock IS held but we could not age it",
+    // which stays distinguishable via dpkg_lock_scan_complete.
+    res.dpkg_lock_held_secs = if res.dpkg_lock_holders.is_empty() {
+        Some(0)
+    } else {
+        res.dpkg_lock_holders
+            .iter()
+            .filter_map(|h| h.held_for_secs)
+            .max()
+    };
 }
 
 // ---- tests -----------------------------------------------------------------
