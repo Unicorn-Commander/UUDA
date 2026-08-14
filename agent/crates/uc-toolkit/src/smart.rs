@@ -335,8 +335,20 @@ pub fn parse_smartctl_json(raw: &str) -> Option<SmartReadings> {
             // RAW value — never `value`/`worst`/`thresh`, which are the
             // normalized numbers that kept REDACTED_HARDWARE_ID "PASSED".
             let raw = entry.get("raw");
-            let val = as_u64(raw.and_then(|r| r.get("value")))
-                .or_else(|| as_u64(raw.and_then(|r| r.get("string"))));
+            // Seagate (and others) pack minutes/seconds into the high bits of
+            // the Power_On_Hours raw integer: REDACTED_HARDWARE_ID reports
+            // raw.value = 8857098737736293 alongside
+            // raw.string = "55909h+34m+22.204s". Taking the integer verbatim
+            // printed power-on times of ~10^15 hours. For that attribute the
+            // rendered string's leading number is the trustworthy one; for
+            // every other attribute the integer stays authoritative.
+            let val = if slot == ATTR_POWER_ON_HOURS {
+                as_u64(raw.and_then(|r| r.get("string")))
+                    .or_else(|| as_u64(raw.and_then(|r| r.get("value"))))
+            } else {
+                as_u64(raw.and_then(|r| r.get("value")))
+                    .or_else(|| as_u64(raw.and_then(|r| r.get("string"))))
+            };
             if let Some(val) = val {
                 assign(&mut r, slot, val);
             }
@@ -962,6 +974,30 @@ ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_
     /// The single most important assertion in this crate: a disk whose vendor
     /// verdict is PASSED, but whose raw counters show 2,776 pending and 2,776
     /// offline-uncorrectable sectors, must come back **CRIT**.
+    #[test]
+    /// Seagate packs minutes and seconds into the high bits of the
+    /// Power_On_Hours raw integer. Taking `raw.value` verbatim printed
+    /// power-on times around 10^15 hours for four drives on bigboy. The
+    /// rendered string carries the real figure.
+    #[test]
+    fn seagate_packed_power_on_hours_uses_the_rendered_string() {
+        let json = r#"{
+          "model_name": "ST8000DM004-2CX188",
+          "serial_number": "REDACTED_HARDWARE_ID",
+          "smart_status": {"passed": true},
+          "ata_smart_attributes": {"table": [
+            {"id": 9, "name": "Power_On_Hours",
+             "raw": {"value": 8857098737736293, "string": "55909h+34m+22.204s"}},
+            {"id": 197, "name": "Current_Pending_Sector",
+             "raw": {"value": 104, "string": "104"}}
+          ]}
+        }"#;
+        let r = parse_smartctl_json(json).expect("valid smartctl JSON");
+        assert_eq!(r.power_on_hours, Some(55909), "must not take the packed integer");
+        // Every other attribute still trusts the integer.
+        assert_eq!(r.pending_sectors, Some(104));
+    }
+
     #[test]
     fn za215mpq_reports_crit_despite_smart_saying_passed() {
         let r = parse_smartctl_json(REDACTED_HARDWARE_ID_JSON).expect("valid smartctl JSON");
