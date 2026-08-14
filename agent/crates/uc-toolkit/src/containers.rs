@@ -88,7 +88,18 @@ pub struct ContainerImagesResult {
     pub total_running: u32,
     pub unpinnable_count: u32,
     pub stale_count: u32,
-    pub restarting_count: u32,
+    /// Containers whose *lifetime* `RestartCount` exceeds `restart_threshold`.
+    ///
+    /// This is history, not current state. Docker's `RestartCount` is cumulative
+    /// for the life of the container and never decreases, so a container that
+    /// flapped once months ago and has been stable since still counts here
+    /// forever. It was originally called `restarting_count`, which read as "is
+    /// restarting right now" and made a drift check that could never clear.
+    /// Alert on `restarting_now` instead; use this one for post-mortems.
+    pub high_restart_count: u32,
+    /// Containers in Docker's `restarting` state *at this moment* -- an actual
+    /// restart loop. This is the one worth paging on.
+    pub restarting_now: u32,
     pub unhealthy_count: u32,
     /// The threshold used, echoed so a caller knows what "stale" meant here.
     pub stale_after_days: u32,
@@ -106,7 +117,8 @@ impl ContainerImagesResult {
             total_running: 0,
             unpinnable_count: 0,
             stale_count: 0,
-            restarting_count: 0,
+            high_restart_count: 0,
+            restarting_now: 0,
             unhealthy_count: 0,
             stale_after_days: opts.stale_after_days,
             restart_threshold: opts.restart_threshold,
@@ -330,9 +342,13 @@ pub fn build_report(
         total_running: containers.len() as u32,
         unpinnable_count: containers.iter().filter(|c| c.unpinnable).count() as u32,
         stale_count: containers.iter().filter(|c| c.image_stale).count() as u32,
-        restarting_count: containers
+        high_restart_count: containers
             .iter()
             .filter(|c| c.restarting_frequently)
+            .count() as u32,
+        restarting_now: containers
+            .iter()
+            .filter(|c| c.state.eq_ignore_ascii_case("restarting"))
             .count() as u32,
         unhealthy_count: containers
             .iter()
@@ -590,7 +606,10 @@ mod tests {
 
         assert_eq!(r.unpinnable_count, 2);
         assert_eq!(r.stale_count, 1);
-        assert_eq!(r.restarting_count, 1);
+        // Lifetime churn, not current state: this fixture has one container
+        // over the restart threshold, and none actually restarting now.
+        assert_eq!(r.high_restart_count, 1);
+        assert_eq!(r.restarting_now, 0);
         assert_eq!(r.unhealthy_count, 1);
     }
 
