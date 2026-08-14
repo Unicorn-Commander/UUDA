@@ -1,0 +1,132 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Two independently-tested halves, two jobs. A change to one is not covered by
+# the other's tests.
+#
+# Runner constraint: uc-forgejo-runner advertises `ubuntu-latest` (and
+# `ubuntu-22.04`) only. A job asking for any other label — `docker` included —
+# queues forever and never fails, which looks exactly like a repo that has CI.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    name: agent (rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      # protoc: uc-types/build.rs runs prost + pbjson codegen, so nothing in the
+      # workspace compiles without it.
+      # cc: rusqlite ships bundled SQLite and compiles it, and
+      # agent/.cargo/config.toml names x86_64-linux-gnu-gcc as the linker for
+      # the host target, so a missing C toolchain fails late and cryptically.
+      - name: Install build prerequisites
+        run: |
+          set -euo pipefail
+          SUDO=""; [ "$(id -u)" -eq 0 ] || SUDO=sudo
+          pkgs=""
+          command -v protoc >/dev/null 2>&1 || pkgs="$pkgs protobuf-compiler"
+          command -v cc >/dev/null 2>&1 || pkgs="$pkgs build-essential"
+          if [ "$(uname -m)" = x86_64 ] && ! command -v x86_64-linux-gnu-gcc >/dev/null 2>&1; then
+            pkgs="$pkgs build-essential"
+          fi
+          if [ -n "$pkgs" ]; then
+            $SUDO apt-get update
+            # shellcheck disable=SC2086
+            $SUDO apt-get install -y --no-install-recommends $pkgs
+          fi
+          protoc --version
+          cc --version | head -1
+          if [ "$(uname -m)" = x86_64 ] && ! command -v x86_64-linux-gnu-gcc >/dev/null 2>&1; then
+            echo "x86_64-linux-gnu-gcc missing; agent/.cargo/config.toml needs it as the linker" >&2
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          # Versions come from agent/rust-toolchain.toml (channel 1.88 +
+          # rustfmt/clippy). `rustup show` materialises it from this directory.
+          # A floating linter version turns CI red on an unrelated day, so the
+          # pin lives there and is never overridden here.
+          rustup show
+          cargo --version
+          cargo fmt --version
+          cargo clippy --version
+
+      # Cache is best-effort: if the Forgejo instance has the Actions cache
+      # disabled, the step warns instead of failing the run.
+      - name: Cache cargo
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            agent/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('agent/Cargo.lock', 'agent/rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      # NOT a gate yet: the tree is not rustfmt-clean as of 434cd75 (18 files,
+      # 92 hunks). This reports the diff so the debt stays visible. Run
+      # `cd agent && cargo fmt` once, then delete continue-on-error.
+      - name: cargo fmt --check
+        continue-on-error: true
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets
+
+      - name: cargo test
+        run: cargo test --workspace
+
+  python:
+    name: control-plane (python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: control-plane/ops-center-patch/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      # The runner image carries Python 3.10 and the toolcache has no Python,
+      # so setup-python downloads it.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pinned exactly. These are the versions the suite is green against; an
+      # unpinned pytest or fastapi is a red pipeline waiting for a release day.
+      - name: Install test dependencies
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --no-input \
+            "pytest==9.0.2" \
+            "pytest-asyncio==1.3.0" \
+            "fastapi==0.128.0" \
+            "httpx==0.28.1" \
+            "cryptography==48.0.0"
+
+      # Run from backend/ so `routers` imports resolve, and pick up
+      # tests/pytest.ini (asyncio_mode = auto).
+      - name: pytest
+        run: python3 -m pytest tests/ -q
