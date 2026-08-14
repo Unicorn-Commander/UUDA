@@ -3,7 +3,13 @@
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // Read CARGO_MANIFEST_DIR at RUNTIME, not with env!(). env!() bakes the
+    // path in when the build script itself is compiled, so a build-script
+    // binary cached from another checkout (a git worktree, a moved clone)
+    // keeps pointing at wherever it was first built and every later build
+    // fails with "Could not make proto path relative" against a directory that
+    // no longer exists. Cargo always sets this variable when it runs us.
+    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?);
     let proto_root = manifest.join("../../../proto");
     let proto_files = [
         proto_root.join("uc/v1/errors.proto"),
