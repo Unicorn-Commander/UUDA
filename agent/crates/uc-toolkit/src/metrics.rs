@@ -104,7 +104,11 @@ impl Sampler {
         });
     }
 
-    pub async fn snapshot(&self, window: Duration, max_series: u32) -> ToolResult<uc_types::MetricsResponse> {
+    pub async fn snapshot(
+        &self,
+        window: Duration,
+        max_series: u32,
+    ) -> ToolResult<uc_types::MetricsResponse> {
         let cap = clamp_max_series(max_series);
         let now = time::OffsetDateTime::now_utc();
         let earliest = now - time::Duration::seconds(window.as_secs() as i64);
@@ -123,17 +127,29 @@ impl Sampler {
 
         let mut series: Vec<uc_types::MetricSeries> = Vec::new();
         series.push(scalar_series("cpu.user", "ratio", &samples, |s| s.cpu_user));
-        series.push(scalar_series("cpu.system", "ratio", &samples, |s| s.cpu_system));
+        series.push(scalar_series("cpu.system", "ratio", &samples, |s| {
+            s.cpu_system
+        }));
         series.push(scalar_series("cpu.idle", "ratio", &samples, |s| s.cpu_idle));
-        series.push(scalar_series("mem.used_bytes", "bytes", &samples, |s| s.mem_used as f64));
-        series.push(scalar_series("mem.available_bytes", "bytes", &samples, |s| {
-            s.mem_available as f64
+        series.push(scalar_series("mem.used_bytes", "bytes", &samples, |s| {
+            s.mem_used as f64
         }));
-        series.push(scalar_series("mem.swap_used_bytes", "bytes", &samples, |s| {
-            s.swap_used as f64
-        }));
+        series.push(scalar_series(
+            "mem.available_bytes",
+            "bytes",
+            &samples,
+            |s| s.mem_available as f64,
+        ));
+        series.push(scalar_series(
+            "mem.swap_used_bytes",
+            "bytes",
+            &samples,
+            |s| s.swap_used as f64,
+        ));
 
-        for mount in unique_keys(&samples, |s| s.disk_used.iter().map(|(m, _)| m.clone()).collect()) {
+        for mount in unique_keys(&samples, |s| {
+            s.disk_used.iter().map(|(m, _)| m.clone()).collect()
+        }) {
             series.push(labeled_series(
                 "disk.used_bytes",
                 "bytes",
@@ -149,7 +165,9 @@ impl Sampler {
             ));
         }
 
-        for nic in unique_keys(&samples, |s| s.net_rx.iter().map(|(n, _)| n.clone()).collect()) {
+        for nic in unique_keys(&samples, |s| {
+            s.net_rx.iter().map(|(n, _)| n.clone()).collect()
+        }) {
             series.push(labeled_series(
                 "net.rx_bytes",
                 "bytes",
@@ -195,7 +213,11 @@ impl Sampler {
 }
 
 fn clamp_max_series(requested: u32) -> u32 {
-    let n = if requested == 0 { uc_types::MAX_SERIES_DEFAULT } else { requested };
+    let n = if requested == 0 {
+        uc_types::MAX_SERIES_DEFAULT
+    } else {
+        requested
+    };
     n.min(uc_types::MAX_SERIES_HARD)
 }
 
@@ -205,7 +227,11 @@ fn global_cpu_breakdown(sys: &System) -> (f64, f64, f64) {
         return (0.0, 0.0, 1.0);
     }
     let total = cpus.len() as f64;
-    let user: f64 = cpus.iter().map(|c| c.cpu_usage() as f64 / 100.0).sum::<f64>() / total;
+    let user: f64 = cpus
+        .iter()
+        .map(|c| c.cpu_usage() as f64 / 100.0)
+        .sum::<f64>()
+        / total;
     let idle = (1.0 - user).clamp(0.0, 1.0);
     (user, 0.0, idle)
 }
@@ -217,7 +243,12 @@ fn timestamp(t: time::OffsetDateTime) -> pbjson_types::Timestamp {
     }
 }
 
-fn scalar_series<F>(name: &str, unit: &str, samples: &[&Sample], extract: F) -> uc_types::MetricSeries
+fn scalar_series<F>(
+    name: &str,
+    unit: &str,
+    samples: &[&Sample],
+    extract: F,
+) -> uc_types::MetricSeries
 where
     F: Fn(&Sample) -> f64,
 {

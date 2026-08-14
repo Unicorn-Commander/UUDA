@@ -28,23 +28,14 @@ pub trait PackageBackend: Send + Sync {
 
     async fn current_version(&self, name: &str) -> ToolResult<Option<String>>;
 
-    async fn plan_install(
-        &self,
-        name: &str,
-        version: Option<&str>,
-    ) -> ToolResult<InstallPlan>;
+    async fn plan_install(&self, name: &str, version: Option<&str>) -> ToolResult<InstallPlan>;
 
-    async fn apply_install(
-        &self,
-        name: &str,
-        version: Option<&str>,
-    ) -> ToolResult<InstallApplied>;
+    async fn apply_install(&self, name: &str, version: Option<&str>) -> ToolResult<InstallApplied>;
 }
 
 pub fn detect() -> Box<dyn PackageBackend> {
     if cfg!(target_os = "macos") {
-        if Path::new("/opt/homebrew/bin/brew").exists()
-            || Path::new("/usr/local/bin/brew").exists()
+        if Path::new("/opt/homebrew/bin/brew").exists() || Path::new("/usr/local/bin/brew").exists()
         {
             return Box::new(BrewBackend);
         }
@@ -145,11 +136,7 @@ impl PackageBackend for AptBackend {
         }
     }
 
-    async fn plan_install(
-        &self,
-        name: &str,
-        version: Option<&str>,
-    ) -> ToolResult<InstallPlan> {
+    async fn plan_install(&self, name: &str, version: Option<&str>) -> ToolResult<InstallPlan> {
         let target = qualified_name(name, version);
         let out = Command::new("apt-get")
             .args(["-s", "install", "-y", &target])
@@ -173,11 +160,7 @@ impl PackageBackend for AptBackend {
         })
     }
 
-    async fn apply_install(
-        &self,
-        name: &str,
-        version: Option<&str>,
-    ) -> ToolResult<InstallApplied> {
+    async fn apply_install(&self, name: &str, version: Option<&str>) -> ToolResult<InstallApplied> {
         let target = qualified_name(name, version);
         let out = Command::new("apt-get")
             .args(["install", "-y", &target])
@@ -226,8 +209,8 @@ fn brew_path() -> Option<&'static str> {
 fn brew_owner_username() -> ToolResult<String> {
     use std::os::unix::fs::MetadataExt;
     let path = brew_path().ok_or_else(|| ToolError::Backend("brew not found in PATH".into()))?;
-    let meta = std::fs::metadata(path)
-        .map_err(|e| ToolError::Backend(format!("stat {path}: {e}")))?;
+    let meta =
+        std::fs::metadata(path).map_err(|e| ToolError::Backend(format!("stat {path}: {e}")))?;
     let uid = nix::unistd::Uid::from_raw(meta.uid());
     let user = nix::unistd::User::from_uid(uid)
         .map_err(|e| ToolError::Backend(format!("getpwuid: {e}")))?
@@ -351,12 +334,16 @@ impl PackageBackend for BrewBackend {
 
     #[cfg(not(target_os = "macos"))]
     async fn current_version(&self, _name: &str) -> ToolResult<Option<String>> {
-        Err(ToolError::Backend("brew backend only available on macOS".into()))
+        Err(ToolError::Backend(
+            "brew backend only available on macOS".into(),
+        ))
     }
 
     #[cfg(not(target_os = "macos"))]
     async fn plan_install(&self, _name: &str, _version: Option<&str>) -> ToolResult<InstallPlan> {
-        Err(ToolError::Backend("brew backend only available on macOS".into()))
+        Err(ToolError::Backend(
+            "brew backend only available on macOS".into(),
+        ))
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -365,7 +352,9 @@ impl PackageBackend for BrewBackend {
         _name: &str,
         _version: Option<&str>,
     ) -> ToolResult<InstallApplied> {
-        Err(ToolError::Backend("brew backend only available on macOS".into()))
+        Err(ToolError::Backend(
+            "brew backend only available on macOS".into(),
+        ))
     }
 }
 

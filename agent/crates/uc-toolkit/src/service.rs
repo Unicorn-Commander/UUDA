@@ -38,8 +38,8 @@ impl ServiceBackend for SystemdBackend {
     async fn status(&self, name: &str) -> ToolResult<uc_types::ServiceStatusResponse> {
         let props = systemctl_show(name).await?;
 
-        let exists = !props.is_empty()
-            && props.get("LoadState").map(|v| v.as_str()) != Some("not-found");
+        let exists =
+            !props.is_empty() && props.get("LoadState").map(|v| v.as_str()) != Some("not-found");
 
         let state = match props.get("ActiveState").map(String::as_str) {
             Some("active") => uc_types::ServiceState::Active,
@@ -57,15 +57,13 @@ impl ServiceBackend for SystemdBackend {
             .and_then(|v| v.parse::<u32>().ok())
             .filter(|p| *p != 0);
 
-        let since = props
-            .get("ActiveEnterTimestamp")
-            .and_then(|s| {
-                if s.is_empty() || s == "n/a" {
-                    None
-                } else {
-                    parse_systemd_timestamp(s)
-                }
-            });
+        let since = props.get("ActiveEnterTimestamp").and_then(|s| {
+            if s.is_empty() || s == "n/a" {
+                None
+            } else {
+                parse_systemd_timestamp(s)
+            }
+        });
 
         let recent_logs = if exists {
             logs::collect(name, None, 20)
@@ -147,7 +145,9 @@ impl ServiceBackend for LaunchdBackend {
 
     #[cfg(not(target_os = "macos"))]
     async fn status(&self, _name: &str) -> ToolResult<uc_types::ServiceStatusResponse> {
-        Err(ToolError::Backend("launchd backend only available on macOS".into()))
+        Err(ToolError::Backend(
+            "launchd backend only available on macOS".into(),
+        ))
     }
 }
 
@@ -188,13 +188,15 @@ fn parse_launchctl_print(body: &str) -> LaunchctlParsed {
         }
     }
 
-    if matches!(state, uc_types::ServiceState::Inactive)
-        && last_exit_code.unwrap_or(0) != 0
-    {
+    if matches!(state, uc_types::ServiceState::Inactive) && last_exit_code.unwrap_or(0) != 0 {
         state = uc_types::ServiceState::Failed;
     }
 
-    LaunchctlParsed { state, enabled, pid }
+    LaunchctlParsed {
+        state,
+        enabled,
+        pid,
+    }
 }
 
 pub struct NoBackend;

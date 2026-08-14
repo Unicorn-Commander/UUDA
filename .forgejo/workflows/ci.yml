@@ -86,11 +86,9 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-
 
-      # NOT a gate yet: the tree is not rustfmt-clean as of 434cd75 (18 files,
-      # 92 hunks). This reports the diff so the debt stays visible. Run
-      # `cd agent && cargo fmt` once, then delete continue-on-error.
+      # A real gate. The tree was formatted once (18 files) so this can fail the
+      # build instead of quietly reporting debt nobody reads.
       - name: cargo fmt --check
-        continue-on-error: true
         run: cargo fmt --check
 
       - name: cargo clippy

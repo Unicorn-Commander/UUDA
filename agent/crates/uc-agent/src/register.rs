@@ -121,8 +121,8 @@ fn gather_facts(cfg: &Config) -> Result<Facts> {
 
     let hostname = tailnet::hostname()?;
     let tailnet_ip = tailnet::local_ipv4()?.to_string();
-    let os_release = sysinfo::System::long_os_version()
-        .unwrap_or_else(|| std::env::consts::OS.to_string());
+    let os_release =
+        sysinfo::System::long_os_version().unwrap_or_else(|| std::env::consts::OS.to_string());
     let kernel = sysinfo::System::kernel_version().unwrap_or_default();
     let arch = std::env::consts::ARCH.to_string();
 
@@ -152,4 +152,3 @@ fn detect_os() -> String {
         other => other.to_string(),
     }
 }
-

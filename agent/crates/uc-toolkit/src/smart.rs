@@ -246,7 +246,10 @@ const ATTR_CRC: u64 = 199;
 /// resolves ids we don't recognise.
 fn attr_slot(id: u64, name: &str) -> Option<u64> {
     match id {
-        ATTR_REALLOCATED | ATTR_POWER_ON_HOURS | ATTR_PENDING | ATTR_OFFLINE_UNCORRECTABLE
+        ATTR_REALLOCATED
+        | ATTR_POWER_ON_HOURS
+        | ATTR_PENDING
+        | ATTR_OFFLINE_UNCORRECTABLE
         | ATTR_CRC => return Some(id),
         _ => {}
     }
@@ -295,7 +298,11 @@ fn as_string(v: Option<&Value>) -> Option<String> {
 /// Parse the leading integer of a raw-value string like `"2776"` or
 /// `"30 (Min/Max 20/45)"` or `"41821h+12m"`.
 fn leading_u64(s: &str) -> Option<u64> {
-    let digits: String = s.trim().chars().take_while(|c| c.is_ascii_digit()).collect();
+    let digits: String = s
+        .trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     if digits.is_empty() {
         None
     } else {
@@ -638,7 +645,13 @@ pub async fn collect(opts: SmartOptions) -> ToolResult<SmartResult> {
     // lsblk identity (best-effort; a missing lsblk is not fatal).
     let blocks: BTreeMap<String, BlockDevice> = match exec::run(
         "lsblk",
-        &["-J", "-b", "-p", "-o", "NAME,SERIAL,MODEL,SIZE,ROTA,TRAN,TYPE"],
+        &[
+            "-J",
+            "-b",
+            "-p",
+            "-o",
+            "NAME,SERIAL,MODEL,SIZE,ROTA,TRAN,TYPE",
+        ],
         timeout,
     )
     .await
@@ -729,7 +742,11 @@ async fn read_with_type(
 }
 
 /// Read one device: JSON first, text fallback second.
-async fn read_one(dev: &ScannedDevice, block: Option<&BlockDevice>, timeout: Duration) -> SmartDisk {
+async fn read_one(
+    dev: &ScannedDevice,
+    block: Option<&BlockDevice>,
+    timeout: Duration,
+) -> SmartDisk {
     // Try smartctl's own auto-detection first, and only then the type that
     // `--scan` suggested.
     //
@@ -783,8 +800,8 @@ async fn read_one(dev: &ScannedDevice, block: Option<&BlockDevice>, timeout: Dur
             match exec::run("smartctl", &text_args, timeout).await {
                 Ok(t) => {
                     let readings = parse_smartctl_text(&t.stdout);
-                    let err = (is_blank(&readings))
-                        .then(|| smartctl_failure_hint(&t.stdout, &t.stderr));
+                    let err =
+                        (is_blank(&readings)).then(|| smartctl_failure_hint(&t.stdout, &t.stderr));
                     build_disk(&dev.path, &readings, block, err)
                 }
                 Err(e) => build_disk(
@@ -993,7 +1010,11 @@ ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_
           ]}
         }"#;
         let r = parse_smartctl_json(json).expect("valid smartctl JSON");
-        assert_eq!(r.power_on_hours, Some(55909), "must not take the packed integer");
+        assert_eq!(
+            r.power_on_hours,
+            Some(55909),
+            "must not take the packed integer"
+        );
         // Every other attribute still trusts the integer.
         assert_eq!(r.pending_sectors, Some(104));
     }
@@ -1026,7 +1047,9 @@ ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_
             "reasons name the pending sectors: {reasons:?}"
         );
         assert!(
-            reasons.iter().any(|s| s.contains("2776 offline-uncorrectable")),
+            reasons
+                .iter()
+                .any(|s| s.contains("2776 offline-uncorrectable")),
             "reasons name the uncorrectables: {reasons:?}"
         );
         assert!(
@@ -1153,7 +1176,10 @@ ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_
     /// the rest.
     #[test]
     fn attribute_slots_resolve_by_id_then_by_vendor_name() {
-        assert_eq!(attr_slot(197, "Whatever_Vendor_Called_It"), Some(ATTR_PENDING));
+        assert_eq!(
+            attr_slot(197, "Whatever_Vendor_Called_It"),
+            Some(ATTR_PENDING)
+        );
         assert_eq!(
             attr_slot(0, "Current_Pending_Sector_Count"),
             Some(ATTR_PENDING)
@@ -1162,7 +1188,10 @@ ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_
             attr_slot(0, "Uncorrectable_Sector_Ct"),
             Some(ATTR_OFFLINE_UNCORRECTABLE)
         );
-        assert_eq!(attr_slot(0, "Reallocated_Sector_Ct"), Some(ATTR_REALLOCATED));
+        assert_eq!(
+            attr_slot(0, "Reallocated_Sector_Ct"),
+            Some(ATTR_REALLOCATED)
+        );
         assert_eq!(attr_slot(0, "UDMA_CRC_Error_Count"), Some(ATTR_CRC));
         // 187 Reported_Uncorrect is a different counter and must not be mapped
         // onto 198 by a sloppy substring match.
@@ -1189,7 +1218,10 @@ ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_
     fn lsblk_stringy_columns_and_bare_names_are_handled() {
         let devs = parse_lsblk_json(LSBLK_JSON_STRINGY);
         assert_eq!(devs.len(), 1);
-        assert_eq!(devs[0].path, "/dev/sdb", "a bare name gains the /dev prefix");
+        assert_eq!(
+            devs[0].path, "/dev/sdb",
+            "a bare name gains the /dev prefix"
+        );
         assert_eq!(devs[0].rotational, Some(true), "\"1\" is true");
         assert_eq!(
             devs[0].size_bytes,
@@ -1221,7 +1253,9 @@ ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_
         if cfg!(target_os = "linux") {
             return;
         }
-        let res = collect(SmartOptions::default()).await.expect("never errors");
+        let res = collect(SmartOptions::default())
+            .await
+            .expect("never errors");
         assert!(!res.smartctl_available);
         assert!(res.disks.is_empty());
         assert!(res.error.is_some(), "says why it is unavailable");

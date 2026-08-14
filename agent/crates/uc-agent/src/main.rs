@@ -131,4 +131,3 @@ async fn shutdown_signal() {
         _ = int.recv() => {}
     }
 }
-

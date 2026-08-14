@@ -195,7 +195,11 @@ const UNATTENDED_OUTCOMES: &[&str] = &[
 /// most recent recognisable outcome. Lines look like:
 /// `2026-08-10 06:33:11,004 INFO All upgrades installed`
 pub fn parse_unattended_log(raw: &str) -> Option<UnattendedOutcome> {
-    let lines: Vec<&str> = raw.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = raw
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
     let pick = lines
         .iter()
         .rev()
@@ -221,7 +225,11 @@ fn split_unattended_line(line: &str) -> UnattendedOutcome {
         && fields[0].split('-').count() == 3
         && fields[1].contains(':');
     if looks_dated {
-        let ts = format!("{} {}", fields[0], fields[1].split(',').next().unwrap_or(""));
+        let ts = format!(
+            "{} {}",
+            fields[0],
+            fields[1].split(',').next().unwrap_or("")
+        );
         UnattendedOutcome {
             at: Some(ts),
             level: Some(fields[2].to_string()),
@@ -310,7 +318,10 @@ pub fn parse_proc_stat(raw: &str) -> Option<ProcStat> {
     let rest: Vec<&str> = raw[close + 1..].split_whitespace().collect();
     // rest[0] is field 3 (state), so field N is rest[N - 3].
     let state = rest.first()?.chars().next()?;
-    let starttime_ticks = rest.get(19).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+    let starttime_ticks = rest
+        .get(19)
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
     Some(ProcStat {
         pid,
         comm,
@@ -445,7 +456,8 @@ pub async fn collect(timeout: Option<Duration>) -> ToolResult<UpdateStatusResult
 
     collect_lock_state(&mut res, uptime);
 
-    res.apt_available = Path::new("/usr/bin/apt-get").exists() || Path::new("/usr/bin/apt").exists();
+    res.apt_available =
+        Path::new("/usr/bin/apt-get").exists() || Path::new("/usr/bin/apt").exists();
     if !res.apt_available {
         res.errors
             .push("apt is not installed on this host (non-Debian Linux)".to_string());
@@ -460,9 +472,7 @@ pub async fn collect(timeout: Option<Duration>) -> ToolResult<UpdateStatusResult
         res.last_update_unix = Some(ts);
         res.last_update_source = Some("apt-lists-mtime".to_string());
     }
-    res.last_update_age_secs = res
-        .last_update_unix
-        .map(|t| (now_unix() - t).max(0) as u64);
+    res.last_update_age_secs = res.last_update_unix.map(|t| (now_unix() - t).max(0) as u64);
 
     // --- upgradable + security ---
     match exec::run("apt", &["list", "--upgradable"], timeout).await {
@@ -484,9 +494,7 @@ pub async fn collect(timeout: Option<Duration>) -> ToolResult<UpdateStatusResult
     match std::fs::read_to_string(UNATTENDED_LOG) {
         Ok(log) => res.unattended_last_outcome = parse_unattended_log(&log),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => res
-            .errors
-            .push(format!("read {UNATTENDED_LOG}: {e}")),
+        Err(e) => res.errors.push(format!("read {UNATTENDED_LOG}: {e}")),
     }
 
     // --- reboot required ---
@@ -636,7 +644,10 @@ docker-ce/jammy 5:26.1.4-1~ubuntu.22.04~jammy amd64 [upgradable from: 5:26.1.3-1
             vec!["libssl3", "curl"],
             "only packages from a -security suite count"
         );
-        assert!(!pkgs[3].security, "a third-party repo is not a security suite");
+        assert!(
+            !pkgs[3].security,
+            "a third-party repo is not a security suite"
+        );
     }
 
     #[test]

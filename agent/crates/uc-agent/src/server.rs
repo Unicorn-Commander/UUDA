@@ -132,5 +132,7 @@ async fn healthz() -> Json<serde_json::Value> {
 }
 
 async fn version() -> Json<serde_json::Value> {
-    Json(json!({"agent_version": env!("CARGO_PKG_VERSION"), "proto_package": uc_types::PROTO_PACKAGE}))
+    Json(
+        json!({"agent_version": env!("CARGO_PKG_VERSION"), "proto_package": uc_types::PROTO_PACKAGE}),
+    )
 }

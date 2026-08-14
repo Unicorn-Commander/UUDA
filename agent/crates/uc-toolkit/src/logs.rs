@@ -44,7 +44,11 @@ pub async fn collect(
 }
 
 #[cfg(target_os = "linux")]
-async fn backend_fetch(service: &str, since_secs: Option<i64>, max_lines: u32) -> ToolResult<Vec<u8>> {
+async fn backend_fetch(
+    service: &str,
+    since_secs: Option<i64>,
+    max_lines: u32,
+) -> ToolResult<Vec<u8>> {
     let mut cmd = Command::new("journalctl");
     cmd.arg("-u").arg(service);
     cmd.arg("-o").arg("json");
@@ -74,7 +78,11 @@ use std::process::Stdio as MacStdio;
 use tokio::process::Command as MacCommand;
 
 #[cfg(target_os = "macos")]
-async fn backend_fetch(service: &str, since_secs: Option<i64>, max_lines: u32) -> ToolResult<Vec<u8>> {
+async fn backend_fetch(
+    service: &str,
+    since_secs: Option<i64>,
+    max_lines: u32,
+) -> ToolResult<Vec<u8>> {
     let predicate = format!("subsystem == \"{}\"", service.replace('"', "\\\""));
     let mut cmd = MacCommand::new("log");
     cmd.arg("show");
@@ -82,13 +90,11 @@ async fn backend_fetch(service: &str, since_secs: Option<i64>, max_lines: u32) -
     cmd.arg("--style").arg("ndjson");
     cmd.arg("--info");
     if let Some(since) = since_secs {
-        let when = time::OffsetDateTime::from_unix_timestamp(since).map_err(|e| {
-            ToolError::InvalidInput(format!("since_secs={since} unparseable: {e}"))
-        })?;
-        let format = time::format_description::parse(
-            "[year]-[month]-[day] [hour]:[minute]:[second]",
-        )
-        .map_err(|e| ToolError::Internal(format!("time format: {e}")))?;
+        let when = time::OffsetDateTime::from_unix_timestamp(since)
+            .map_err(|e| ToolError::InvalidInput(format!("since_secs={since} unparseable: {e}")))?;
+        let format =
+            time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+                .map_err(|e| ToolError::Internal(format!("time format: {e}")))?;
         let formatted = when
             .format(&format)
             .map_err(|e| ToolError::Internal(format!("time format: {e}")))?;
@@ -112,9 +118,7 @@ async fn backend_fetch(service: &str, since_secs: Option<i64>, max_lines: u32) -
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 async fn backend_fetch(_service: &str, _since: Option<i64>, _max: u32) -> ToolResult<Vec<u8>> {
-    Err(ToolError::Backend(
-        "no log backend on this platform".into(),
-    ))
+    Err(ToolError::Backend("no log backend on this platform".into()))
 }
 
 fn parse_line_for_platform(line: &str) -> Option<uc_types::LogEntry> {
@@ -156,7 +160,10 @@ fn parse_journalctl_line(line: &str) -> Option<uc_types::LogEntry> {
     let micros: i64 = entry.realtime.as_deref()?.parse().ok()?;
     let secs = micros / 1_000_000;
     let nanos = ((micros % 1_000_000) * 1_000) as i32;
-    let at = pbjson_types::Timestamp { seconds: secs, nanos };
+    let at = pbjson_types::Timestamp {
+        seconds: secs,
+        nanos,
+    };
 
     let message = match entry.message {
         Some(serde_json::Value::String(s)) => s,
@@ -215,7 +222,12 @@ fn parse_log_show_line(line: &str) -> Option<uc_types::LogEntry> {
         .as_deref()
         .and_then(parse_log_show_timestamp);
 
-    let level = match entry.level.as_deref().map(str::to_ascii_lowercase).as_deref() {
+    let level = match entry
+        .level
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
         Some("error") | Some("fault") => "error",
         Some("default") | Some("info") => "info",
         Some("debug") => "debug",

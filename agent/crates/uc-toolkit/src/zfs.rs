@@ -62,8 +62,24 @@ const ZPOOL_STATUS_X_ARGS: &[&str] = &["status", "-x"];
 /// `zfs_argv_is_read_only` in the tests below.
 #[cfg(test)]
 const FORBIDDEN_TOKENS: &[&str] = &[
-    "scrub", "clear", "online", "offline", "replace", "import", "export", "destroy", "attach",
-    "detach", "remove", "split", "trim", "initialize", "resilver", "upgrade", "set", "-w",
+    "scrub",
+    "clear",
+    "online",
+    "offline",
+    "replace",
+    "import",
+    "export",
+    "destroy",
+    "attach",
+    "detach",
+    "remove",
+    "split",
+    "trim",
+    "initialize",
+    "resilver",
+    "upgrade",
+    "set",
+    "-w",
 ];
 
 // ---- result types ----------------------------------------------------------
@@ -455,7 +471,10 @@ fn sum_leaf_errors(devices: &[ZfsDevice]) -> (u64, u64, u64) {
         if d.depth == 0 {
             continue; // the pool row
         }
-        let has_children = devices.get(i + 1).map(|n| n.depth > d.depth).unwrap_or(false);
+        let has_children = devices
+            .get(i + 1)
+            .map(|n| n.depth > d.depth)
+            .unwrap_or(false);
         if has_children {
             continue;
         }
@@ -598,7 +617,8 @@ pub async fn collect(timeout: Option<Duration>) -> ToolResult<ZfsResult> {
 mod tests {
     use super::*;
 
-    const LIST_PARSABLE: &str = "tank\t10000831348736\t5931641634816\t4069189713920\tDEGRADED\t5\t59\n\
+    const LIST_PARSABLE: &str =
+        "tank\t10000831348736\t5931641634816\t4069189713920\tDEGRADED\t5\t59\n\
 scratch\t1000204886016\t120259084288\t879945801728\tONLINE\t2\t12\n";
 
     const LIST_HUMAN: &str = "tank\t9.09T\t5.39T\t3.70T\tSUSPENDED\t5%\t59%\n";
@@ -716,10 +736,14 @@ errors: 1 data errors, use '-v' for a list
         assert_eq!(blocks[0].state, "DEGRADED");
         let detail = blocks[0].status_detail.as_deref().unwrap();
         assert!(
-            detail.contains("unrecoverable error") && detail.contains("Applications are unaffected"),
+            detail.contains("unrecoverable error")
+                && detail.contains("Applications are unaffected"),
             "the wrapped continuation line is folded in: {detail}"
         );
-        assert_eq!(blocks[0].errors_line.as_deref(), Some("No known data errors"));
+        assert_eq!(
+            blocks[0].errors_line.as_deref(),
+            Some("No known data errors")
+        );
         assert_eq!(blocks[1].name, "scratch");
     }
 

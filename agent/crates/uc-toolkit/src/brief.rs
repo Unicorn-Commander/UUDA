@@ -81,9 +81,8 @@ impl BriefStore {
 
     pub async fn write_brief(&self, brief: &StoredBrief) -> ToolResult<()> {
         fs::create_dir_all(&self.state_dir).await?;
-        let raw = serde_json::to_vec_pretty(brief).map_err(|e| {
-            ToolError::Internal(format!("serialize brief: {e}"))
-        })?;
+        let raw = serde_json::to_vec_pretty(brief)
+            .map_err(|e| ToolError::Internal(format!("serialize brief: {e}")))?;
         let tmp = self.state_dir.join(format!("{BRIEF_FILE}.tmp"));
         fs::write(&tmp, &raw).await?;
         fs::rename(&tmp, self.brief_path()).await?;
@@ -93,9 +92,8 @@ impl BriefStore {
     pub async fn read_brief(&self) -> ToolResult<Option<StoredBrief>> {
         match fs::read(self.brief_path()).await {
             Ok(bytes) => {
-                let parsed: StoredBrief = serde_json::from_slice(&bytes).map_err(|e| {
-                    ToolError::Internal(format!("parse brief.json: {e}"))
-                })?;
+                let parsed: StoredBrief = serde_json::from_slice(&bytes)
+                    .map_err(|e| ToolError::Internal(format!("parse brief.json: {e}")))?;
                 Ok(Some(parsed))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -106,9 +104,8 @@ impl BriefStore {
     pub async fn read_report(&self) -> ToolResult<Option<StoredReport>> {
         match fs::read(self.report_path()).await {
             Ok(bytes) => {
-                let parsed: StoredReport = serde_json::from_slice(&bytes).map_err(|e| {
-                    ToolError::Internal(format!("parse report.json: {e}"))
-                })?;
+                let parsed: StoredReport = serde_json::from_slice(&bytes)
+                    .map_err(|e| ToolError::Internal(format!("parse report.json: {e}")))?;
                 Ok(Some(parsed))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),

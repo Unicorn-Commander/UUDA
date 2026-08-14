@@ -225,7 +225,9 @@ pub fn parse_image_inspect(raw: &str) -> Vec<ImageMeta> {
             let id = str_at(img, &["Id"])?;
             Some(ImageMeta {
                 id,
-                created_unix: str_at(img, &["Created"]).as_deref().and_then(parse_docker_time),
+                created_unix: str_at(img, &["Created"])
+                    .as_deref()
+                    .and_then(parse_docker_time),
                 digest: img
                     .get("RepoDigests")
                     .and_then(Value::as_array)
@@ -276,7 +278,9 @@ pub fn build_report(
         let meta = images.iter().find(|i| i.id == image_id);
 
         let image_created_unix = meta.and_then(|m| m.created_unix);
-        let container_created_unix = str_at(c, &["Created"]).as_deref().and_then(parse_docker_time);
+        let container_created_unix = str_at(c, &["Created"])
+            .as_deref()
+            .and_then(parse_docker_time);
 
         let restart_count = u32_at(c, &["RestartCount"]).unwrap_or(0);
         let health_status = str_at(c, &["State", "Health", "Status"]);
@@ -293,7 +297,11 @@ pub fn build_report(
         if unpinnable {
             flags.push(format!(
                 "image reference {:?} cannot identify a build (unpinnable)",
-                if image_ref.is_empty() { "<none>" } else { &image_ref }
+                if image_ref.is_empty() {
+                    "<none>"
+                } else {
+                    &image_ref
+                }
             ));
         }
         if image_stale {
@@ -397,7 +405,12 @@ pub async fn collect(opts: ContainerOptions) -> ToolResult<ContainerImagesResult
                 Some("docker CLI is not installed on this host".to_string()),
             ));
         }
-        Err(e) => return Ok(ContainerImagesResult::unavailable(&opts, Some(e.to_string()))),
+        Err(e) => {
+            return Ok(ContainerImagesResult::unavailable(
+                &opts,
+                Some(e.to_string()),
+            ))
+        }
     }
 
     let ids: Vec<String> = match exec::run("docker", DOCKER_PS_ARGS, timeout).await {
@@ -578,7 +591,9 @@ mod tests {
         assert!(is_unpinnable(""));
 
         assert!(!is_unpinnable("ghcr.io/gitroomhq/postiz-app:v1.44.0"));
-        assert!(!is_unpinnable("registry.example.com:5000/internal/cache:2.1.0"));
+        assert!(!is_unpinnable(
+            "registry.example.com:5000/internal/cache:2.1.0"
+        ));
         assert!(!is_unpinnable(
             "nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"
         ));
@@ -596,7 +611,10 @@ mod tests {
         assert!(!postiz.unpinnable, "v1.44.0 is a real pin");
         assert!(postiz.restarting_frequently, "41 restarts");
         assert_eq!(postiz.health_status.as_deref(), Some("unhealthy"));
-        assert!(postiz.flags.iter().any(|f| f.contains("restarted 41 times")));
+        assert!(postiz
+            .flags
+            .iter()
+            .any(|f| f.contains("restarted 41 times")));
         assert!(postiz.flags.iter().any(|f| f.contains("unhealthy")));
 
         let cache = &r.containers[2];

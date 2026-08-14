@@ -7,10 +7,9 @@ use crate::error::{AgentError, Result};
 
 pub fn local_ipv4() -> Result<Ipv4Addr> {
     if let Ok(raw) = std::env::var("UC_AGENT_LISTEN_IP") {
-        return raw
-            .trim()
-            .parse::<Ipv4Addr>()
-            .map_err(|e| AgentError::Tailscale(format!("UC_AGENT_LISTEN_IP not parseable {raw:?}: {e}")));
+        return raw.trim().parse::<Ipv4Addr>().map_err(|e| {
+            AgentError::Tailscale(format!("UC_AGENT_LISTEN_IP not parseable {raw:?}: {e}"))
+        });
     }
     let output = Command::new("tailscale")
         .args(["ip", "--4"])
@@ -24,9 +23,10 @@ pub fn local_ipv4() -> Result<Ipv4Addr> {
         )));
     }
     let raw = String::from_utf8_lossy(&output.stdout);
-    let line = raw.lines().next().ok_or_else(|| {
-        AgentError::Tailscale("tailscale ip --4 returned no output".into())
-    })?;
+    let line = raw
+        .lines()
+        .next()
+        .ok_or_else(|| AgentError::Tailscale("tailscale ip --4 returned no output".into()))?;
     line.trim()
         .parse::<Ipv4Addr>()
         .map_err(|e| AgentError::Tailscale(format!("could not parse tailnet ip {line:?}: {e}")))

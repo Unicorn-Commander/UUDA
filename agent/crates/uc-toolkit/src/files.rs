@@ -173,8 +173,9 @@ mod imp {
             std::fs::create_dir_all(parent)
                 .map_err(|e| ToolError::Backend(format!("create state dir: {e}")))?;
         }
-        let conn = Connection::open(db_path)
-            .map_err(|e| ToolError::Backend(format!("open files index ({}): {e}", db_path.display())))?;
+        let conn = Connection::open(db_path).map_err(|e| {
+            ToolError::Backend(format!("open files index ({}): {e}", db_path.display()))
+        })?;
         conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(path UNINDEXED, content);
              CREATE TABLE IF NOT EXISTS files_meta (
@@ -301,8 +302,11 @@ mod imp {
             };
 
             // Upsert: drop any prior FTS rows for this path, then reinsert.
-            tx.execute("DELETE FROM files_fts WHERE path = ?1", rusqlite::params![path_str])
-                .map_err(db_err)?;
+            tx.execute(
+                "DELETE FROM files_fts WHERE path = ?1",
+                rusqlite::params![path_str],
+            )
+            .map_err(db_err)?;
             tx.execute(
                 "INSERT INTO files_fts (path, content) VALUES (?1, ?2)",
                 rusqlite::params![path_str, content],
@@ -370,18 +374,15 @@ mod imp {
         let mut stmt = conn.prepare(sql).map_err(db_err)?;
         let prefix: Option<&str> = path_prefix.filter(|p| !p.is_empty());
         let rows = stmt
-            .query_map(
-                rusqlite::params![match_expr, prefix, limit],
-                |row| {
-                    Ok(FileHit {
-                        path: row.get(0)?,
-                        snippet: row.get(1)?,
-                        score: row.get(2)?,
-                        modified_unix: row.get(3)?,
-                        size_bytes: row.get(4)?,
-                    })
-                },
-            )
+            .query_map(rusqlite::params![match_expr, prefix, limit], |row| {
+                Ok(FileHit {
+                    path: row.get(0)?,
+                    snippet: row.get(1)?,
+                    score: row.get(2)?,
+                    modified_unix: row.get(3)?,
+                    size_bytes: row.get(4)?,
+                })
+            })
             .map_err(db_err)?;
 
         let mut hits: Vec<FileHit> = Vec::new();
@@ -408,7 +409,11 @@ mod imp {
             .query_row("SELECT COUNT(*) FROM files_meta", [], |r| r.get(0))
             .map_err(db_err)?;
         let total_bytes: i64 = conn
-            .query_row("SELECT COALESCE(SUM(size_bytes), 0) FROM files_meta", [], |r| r.get(0))
+            .query_row(
+                "SELECT COALESCE(SUM(size_bytes), 0) FROM files_meta",
+                [],
+                |r| r.get(0),
+            )
             .map_err(db_err)?;
         let last_indexed_unix: Option<i64> = conn
             .query_row(
@@ -476,7 +481,10 @@ mod tests {
         let tmp = TempRoot::new("search");
         let root = tmp.path().join("docs");
         write(&root.join("a.md"), "the sovereign privacy moat is our edge");
-        write(&root.join("b.md"), "completely unrelated content about pizza");
+        write(
+            &root.join("b.md"),
+            "completely unrelated content about pizza",
+        );
         write(&root.join("c.txt"), "another note on supply chains");
 
         let idx = FilesIndex::new(tmp.db());
@@ -513,7 +521,9 @@ mod tests {
         assert_eq!(all.hits.len(), 2, "both files match without a prefix");
 
         let prefix = alpha.display().to_string();
-        let scoped = idx.search("apple", 10, Some(&prefix)).expect("search scoped");
+        let scoped = idx
+            .search("apple", 10, Some(&prefix))
+            .expect("search scoped");
         assert_eq!(scoped.hits.len(), 1, "prefix narrows to one subtree");
         assert!(scoped.hits[0].path.contains("alpha"));
     }
@@ -564,7 +574,10 @@ mod tests {
         assert_eq!(first.skipped, 0);
 
         let second = idx.index(&[root], false).expect("index 2");
-        assert_eq!(second.indexed_files, 0, "nothing changed, nothing reindexed");
+        assert_eq!(
+            second.indexed_files, 0,
+            "nothing changed, nothing reindexed"
+        );
         assert_eq!(second.skipped, 2, "both unchanged files skipped");
     }
 }

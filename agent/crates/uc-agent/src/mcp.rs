@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
+    model::{
+        CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+    },
     schemars,
     service::RequestContext,
     tool, tool_handler, tool_router, ErrorData as McpError, RoleServer, ServerHandler,
@@ -407,7 +409,10 @@ impl UudaServer {
         };
 
         let resp = uc_types::AgentReportResponse {
-            current_brief_version: brief.as_ref().map(|b| b.version.clone()).unwrap_or_default(),
+            current_brief_version: brief
+                .as_ref()
+                .map(|b| b.version.clone())
+                .unwrap_or_default(),
             last_brief_at: brief
                 .as_ref()
                 .map(|b| briefmod::timestamp_from_unix_ms(b.received_at_unix_ms)),
@@ -519,10 +524,8 @@ impl UudaServer {
             return files_disabled_result();
         }
         let index = files::FilesIndex::new(self.files_index_path.clone());
-        run_blocking(move || {
-            index.search(&args.query, args.limit, args.path_prefix.as_deref())
-        })
-        .await
+        run_blocking(move || index.search(&args.query, args.limit, args.path_prefix.as_deref()))
+            .await
     }
 
     #[tool(
@@ -648,10 +651,11 @@ impl ServerHandler for UudaServer {
 }
 
 fn json_response<T: Serialize>(value: &T) -> Result<CallToolResult, McpError> {
-    let json: Value = serde_json::to_value(value).map_err(|e| {
-        McpError::internal_error(format!("serialize tool result: {e}"), None)
-    })?;
-    Ok(CallToolResult::success(vec![Content::text(json.to_string())]))
+    let json: Value = serde_json::to_value(value)
+        .map_err(|e| McpError::internal_error(format!("serialize tool result: {e}"), None))?;
+    Ok(CallToolResult::success(vec![Content::text(
+        json.to_string(),
+    )]))
 }
 
 fn error_result(e: uc_toolkit::ToolError) -> CallToolResult {
@@ -673,7 +677,9 @@ fn files_disabled_result() -> Result<CallToolResult, McpError> {
         "enabled": false,
         "message": "file index disabled on this device (set agent.files_enabled = true or UC_FILES_ENABLED=1)",
     });
-    Ok(CallToolResult::success(vec![Content::text(payload.to_string())]))
+    Ok(CallToolResult::success(vec![Content::text(
+        payload.to_string(),
+    )]))
 }
 
 /// Run a blocking toolkit read (SQLite) off the async runtime and shape the result.
@@ -732,7 +738,9 @@ mod health_probe_mcp_tests {
     }
 
     fn payload(v: &Value) -> Value {
-        let text = v["content"][0]["text"].as_str().expect("text content block");
+        let text = v["content"][0]["text"]
+            .as_str()
+            .expect("text content block");
         serde_json::from_str(text).expect("content text is JSON")
     }
 
@@ -752,7 +760,10 @@ mod health_probe_mcp_tests {
             "update.status",
             "container.images",
         ] {
-            assert!(names.contains(&want.to_string()), "{want} advertised; saw {names:?}");
+            assert!(
+                names.contains(&want.to_string()),
+                "{want} advertised; saw {names:?}"
+            );
         }
     }
 
@@ -767,7 +778,10 @@ mod health_probe_mcp_tests {
                 .await
                 .expect("tool call"),
         );
-        assert!(!is_error(&v), "a missing smartctl must not be an error: {v}");
+        assert!(
+            !is_error(&v),
+            "a missing smartctl must not be an error: {v}"
+        );
         let p = payload(&v);
         assert!(
             p["smartctl_available"].is_boolean(),
@@ -990,7 +1004,8 @@ mod messages_mcp_tests {
         // pbjson omits proto3 default values, so `applied=false` renders as absent.
         // A real send would serialize `applied:true`; its absence proves the dry run.
         assert_ne!(
-            p["changeSet"]["applied"], Value::Bool(true),
+            p["changeSet"]["applied"],
+            Value::Bool(true),
             "dry run must NOT be applied: {p}"
         );
         assert_eq!(
@@ -1064,9 +1079,14 @@ mod messages_http_e2e_tests {
                 .disable_allowed_hosts(),
         );
         let app = Router::new()
-            .route("/healthz", get(|| async { Json(serde_json::json!({"status": "ok"})) }))
+            .route(
+                "/healthz",
+                get(|| async { Json(serde_json::json!({"status": "ok"})) }),
+            )
             .nest_service("/mcp/v1", svc);
-        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind loopback");
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind loopback");
         let port = listener.local_addr().expect("addr").port();
         tokio::spawn(async move {
             let _ = axum::serve(listener, app.into_make_service()).await;
@@ -1103,7 +1123,8 @@ mod messages_http_e2e_tests {
     }
 
     async fn rpc(base: &str, method: &str, params: Value) -> Value {
-        let body = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+        let body =
+            serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
         let res = reqwest::Client::new()
             .post(format!("{base}/mcp/v1"))
             .header("Content-Type", "application/json")
@@ -1112,7 +1133,11 @@ mod messages_http_e2e_tests {
             .send()
             .await
             .expect("send");
-        assert!(res.status().is_success(), "HTTP {} from {method}", res.status());
+        assert!(
+            res.status().is_success(),
+            "HTTP {} from {method}",
+            res.status()
+        );
         parse_rpc(&res.text().await.expect("body"))
     }
 
@@ -1123,7 +1148,12 @@ mod messages_http_e2e_tests {
         let env = rpc(&base, "tools/list", serde_json::json!({})).await;
         let tools = env["result"]["tools"].as_array().expect("tools array");
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
-        for want in ["messages.list", "messages.thread", "messages.poll", "messages.send"] {
+        for want in [
+            "messages.list",
+            "messages.thread",
+            "messages.poll",
+            "messages.send",
+        ] {
             assert!(names.contains(&want), "{want} advertised; saw {names:?}");
         }
     }
@@ -1138,13 +1168,26 @@ mod messages_http_e2e_tests {
         wait_ready(&base).await;
         // NOTE: a bare tools/call with NO prior initialize — the exact shape the
         // Customer-Ops client sends. If StreamableHTTP required a session this fails.
-        let env = rpc(&base, "tools/call", serde_json::json!({"name": "messages.list", "arguments": {"limit": 3}})).await;
+        let env = rpc(
+            &base,
+            "tools/call",
+            serde_json::json!({"name": "messages.list", "arguments": {"limit": 3}}),
+        )
+        .await;
         let result = &env["result"];
-        assert!(result["isError"].as_bool() != Some(true), "tool error: {env}");
+        assert!(
+            result["isError"].as_bool() != Some(true),
+            "tool error: {env}"
+        );
         let text = result["content"][0]["text"].as_str().expect("content text");
         let payload: Value = serde_json::from_str(text).expect("tool payload JSON");
-        let convs = payload["conversations"].as_array().expect("conversations array");
-        assert!(!convs.is_empty(), "expected real conversations over the wire");
+        let convs = payload["conversations"]
+            .as_array()
+            .expect("conversations array");
+        assert!(
+            !convs.is_empty(),
+            "expected real conversations over the wire"
+        );
         assert!(convs.len() <= 3, "limit honored over the wire");
     }
 }

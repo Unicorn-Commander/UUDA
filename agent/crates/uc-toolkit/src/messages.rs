@@ -38,7 +38,10 @@ pub fn default_db_path() -> PathBuf {
 // ---- public entry points (cfg-split bodies; identical signatures per OS) ----
 
 /// Most-recent conversations, newest first, each summarised by its last message.
-pub fn list_conversations(db_path: &Path, limit: u32) -> ToolResult<uc_types::MessagesListResponse> {
+pub fn list_conversations(
+    db_path: &Path,
+    limit: u32,
+) -> ToolResult<uc_types::MessagesListResponse> {
     let limit = clamp(limit, LIST_DEFAULT, LIST_CAP);
     #[cfg(target_os = "macos")]
     {
@@ -319,7 +322,9 @@ mod imp {
         limit: u32,
     ) -> ToolResult<uc_types::MessagesThreadResponse> {
         if chat_identifier.is_empty() {
-            return Err(ToolError::InvalidInput("chat_identifier is required".into()));
+            return Err(ToolError::InvalidInput(
+                "chat_identifier is required".into(),
+            ));
         }
         let conn = open_ro(db_path)?;
         let sql = format!(
@@ -382,7 +387,9 @@ mod imp {
         let max_rowid = match messages.iter().map(|m| m.rowid).max() {
             Some(m) => m,
             None => conn
-                .query_row("SELECT COALESCE(MAX(ROWID), 0) FROM message", [], |r| r.get(0))
+                .query_row("SELECT COALESCE(MAX(ROWID), 0) FROM message", [], |r| {
+                    r.get(0)
+                })
                 .map_err(db_err)?,
         };
         messages.shrink_to_fit();
@@ -501,7 +508,12 @@ mod tests {
     fn send_dry_run_does_not_send() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let resp = rt
-            .block_on(send("+15555550123", "hello from a dry run", "iMessage", true))
+            .block_on(send(
+                "+15555550123",
+                "hello from a dry run",
+                "iMessage",
+                true,
+            ))
             .expect("dry-run send");
         let cs = resp.change_set.expect("change_set");
         assert!(!cs.applied, "dry run must not apply");

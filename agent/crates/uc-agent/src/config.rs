@@ -96,9 +96,8 @@ fn default_tls_skip_verify() -> bool {
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
-        let raw = std::fs::read_to_string(path).map_err(|e| {
-            AgentError::Config(format!("cannot read {}: {e}", path.display()))
-        })?;
+        let raw = std::fs::read_to_string(path)
+            .map_err(|e| AgentError::Config(format!("cannot read {}: {e}", path.display())))?;
         let cfg: Self = toml::from_str(&raw)?;
         cfg.validate()?;
         Ok(cfg)
@@ -126,11 +125,17 @@ impl Config {
     }
 
     pub fn register_url(&self) -> String {
-        format!("{}/api/v1/uuda/register", self.control_plane.base_url.trim_end_matches('/'))
+        format!(
+            "{}/api/v1/uuda/register",
+            self.control_plane.base_url.trim_end_matches('/')
+        )
     }
 
     pub fn heartbeat_url(&self) -> String {
-        format!("{}/api/v1/uuda/heartbeat", self.control_plane.base_url.trim_end_matches('/'))
+        format!(
+            "{}/api/v1/uuda/heartbeat",
+            self.control_plane.base_url.trim_end_matches('/')
+        )
     }
 
     pub fn cert_path(&self) -> PathBuf {
@@ -158,7 +163,10 @@ impl Config {
     /// precedence over the config flag (defaults OFF so the family is inert).
     pub fn files_enabled(&self) -> bool {
         match std::env::var("UC_FILES_ENABLED") {
-            Ok(v) => matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+            Ok(v) => matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            ),
             Err(_) => self.agent.files_enabled,
         }
     }

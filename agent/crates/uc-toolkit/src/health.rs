@@ -69,7 +69,10 @@ fn read_cpu_temp() -> Option<f64> {
         let typ_path = path.join("type");
         let temp_path = path.join("temp");
         let typ = fs::read_to_string(&typ_path).ok()?;
-        if !typ.starts_with("x86_pkg_temp") && !typ.starts_with("cpu") && !typ.starts_with("coretemp") {
+        if !typ.starts_with("x86_pkg_temp")
+            && !typ.starts_with("cpu")
+            && !typ.starts_with("coretemp")
+        {
             continue;
         }
         let raw = fs::read_to_string(&temp_path).ok()?;
