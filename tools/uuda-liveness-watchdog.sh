@@ -46,6 +46,27 @@ if ! timeout 30 docker exec "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -tAc "sele
     exit 0
 fi
 
+# Two-strike rule: a device must look stale on TWO consecutive runs before it
+# is alertable.
+#
+# The first version alerted on a single sample and flapped ~20 times in 8 hours
+# on a fleet that never actually stopped heartbeating: 8711 heartbeat POSTs in
+# 5h with no gap over 2 minutes, and the query returns clean when run by hand.
+# Something transient (a slow `docker exec`, a momentarily loaded database) is
+# enough to produce one bad sample, and one bad sample must never be able to
+# page anyone. Confirming across a 15-minute cron gap costs at most one cycle
+# of detection latency on a genuinely dead host, which is nothing next to the
+# cost of an alert channel people learn to ignore.
+PENDING_FILE="$STATE_DIR/stale-pending"
+PENDING=""
+[ -r "$PENDING_FILE" ] && PENDING=$(cat "$PENDING_FILE")
+printf '%s\n' "$CURRENT" | sed '/^$/d' > "$PENDING_FILE"
+
+# Only devices stale in BOTH this run and the previous one are confirmed.
+CONFIRMED=$(comm -12 <(printf '%s\n' "$PENDING" | sed '/^$/d') \
+                     <(printf '%s\n' "$CURRENT" | sed '/^$/d') || true)
+CURRENT="$CONFIRMED"
+
 PREVIOUS=""
 [ -r "$STATE" ] && PREVIOUS=$(cat "$STATE")
 
@@ -99,6 +120,52 @@ if [ -n "$RECOVERED" ]; then
 $RECOVERED
 "
     log "recovered: $(printf '%s' "$RECOVERED" | tr '\n' ' ')"
+fi
+
+# ---- is the scanner itself still scanning? ---------------------------------
+#
+# The drift scheduler shares ops-center's asyncio event loop, so blocking work
+# elsewhere in that app delays its wakeups: on 2026-08-14 it landed ~24 cycles
+# where ~40 were due, and nothing reported the shortfall. A monitor quietly
+# doing less than it claims is the exact failure this whole system exists to
+# catch, so it has to watch itself. Alert only on a hard stall (default 3x the
+# configured interval) rather than on jitter.
+SCAN_STALE_SECS="${SCAN_STALE_SECS:-2700}"
+SCAN_STATE="$STATE_DIR/scan-stale"
+
+AGE=$(timeout 30 docker exec "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -tAc \
+    "select coalesce(extract(epoch from now() - max(observed_at))::bigint, -1)
+       from uuda_drift_observations;" 2>/dev/null | tr -d ' ' || echo "")
+
+case "$AGE" in
+    ''|*[!0-9-]*) AGE=-1 ;;
+esac
+
+PREV_SCAN=no
+[ -r "$SCAN_STATE" ] && PREV_SCAN=$(cat "$SCAN_STATE")
+
+if [ "$AGE" -ge 0 ] && [ "$AGE" -gt "$SCAN_STALE_SECS" ]; then
+    if [ "$PREV_SCAN" != yes ]; then
+        send "[uuda] drift scanner has stopped producing results" \
+"No drift observation has been written for $((AGE / 60)) minutes (threshold $((SCAN_STALE_SECS / 60))m).
+
+The fleet's disk, ZFS, update and container checks are therefore NOT running,
+even though every host may still be heartbeating normally. Check:
+
+  docker logs --since 1h ops-center-direct | grep uuda.scheduler
+  curl -s localhost:8084/api/v1/uuda/drift/scheduler   (needs admin auth)
+"
+        log "scan stale: ${AGE}s"
+    fi
+    printf 'yes\n' > "$SCAN_STATE"
+elif [ "$AGE" -ge 0 ]; then
+    if [ "$PREV_SCAN" = yes ]; then
+        send "[uuda] drift scanner is producing results again" \
+             "Newest observation is ${AGE}s old.
+"
+        log "scan recovered: ${AGE}s"
+    fi
+    printf 'no\n' > "$SCAN_STATE"
 fi
 
 exit 0
