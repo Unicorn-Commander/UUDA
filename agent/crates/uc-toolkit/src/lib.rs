@@ -7,6 +7,7 @@
 
 pub mod brief;
 pub mod error;
+pub mod files;
 pub mod health;
 pub mod logs;
 pub mod messages;

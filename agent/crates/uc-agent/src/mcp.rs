@@ -11,7 +11,7 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use uc_toolkit::{brief as briefmod, health, logs, messages, metrics, package, service};
+use uc_toolkit::{brief as briefmod, files, health, logs, messages, metrics, package, service};
 
 #[derive(Clone)]
 pub struct UudaServer {
@@ -21,11 +21,15 @@ pub struct UudaServer {
     has_local_agent: bool,
     messages_enabled: bool,
     messages_db_path: std::path::PathBuf,
+    files_enabled: bool,
+    files_roots: Vec<std::path::PathBuf>,
+    files_index_path: std::path::PathBuf,
     #[allow(dead_code)]
     tool_router: ToolRouter<UudaServer>,
 }
 
 impl UudaServer {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         sampler: metrics::Sampler,
         agent_version: String,
@@ -33,6 +37,9 @@ impl UudaServer {
         has_local_agent: bool,
         messages_enabled: bool,
         messages_db_path: std::path::PathBuf,
+        files_enabled: bool,
+        files_roots: Vec<std::path::PathBuf>,
+        files_index_path: std::path::PathBuf,
     ) -> Self {
         Self {
             sampler,
@@ -41,6 +48,9 @@ impl UudaServer {
             has_local_agent,
             messages_enabled,
             messages_db_path,
+            files_enabled,
+            files_roots,
+            files_index_path,
             tool_router: Self::tool_router(),
         }
     }
@@ -171,6 +181,35 @@ pub struct MessageSendIn {
     #[serde(default = "default_dry_run")]
     pub dry_run: bool,
 }
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct FilesSearchIn {
+    /// Keyword query (FTS5). Sanitized server-side; never errors on bad syntax.
+    pub query: String,
+    /// Max hits. Default 10, clamped to 1..=50.
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+    /// Optional path prefix filter: only paths starting with this are returned.
+    #[serde(default)]
+    pub path_prefix: Option<String>,
+}
+
+fn default_limit() -> u32 {
+    10
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct FilesIndexIn {
+    /// Roots to index. Null/empty uses the device's configured roots.
+    #[serde(default)]
+    pub roots: Option<Vec<String>>,
+    /// Reindex every file even when unchanged. Defaults to false.
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct FilesStatusIn {}
 
 #[tool_router]
 impl UudaServer {
@@ -423,6 +462,57 @@ impl UudaServer {
             Err(e) => Ok(error_result(e)),
         }
     }
+
+    #[tool(
+        name = "files.search",
+        description = "Keyword (FTS5) search over this device's indexed text files. Returns ranked hits with snippets, modified time and size. Read-only. Requires the file index enabled."
+    )]
+    async fn files_search(
+        &self,
+        Parameters(args): Parameters<FilesSearchIn>,
+    ) -> Result<CallToolResult, McpError> {
+        if !self.files_enabled {
+            return files_disabled_result();
+        }
+        let index = files::FilesIndex::new(self.files_index_path.clone());
+        run_blocking(move || {
+            index.search(&args.query, args.limit, args.path_prefix.as_deref())
+        })
+        .await
+    }
+
+    #[tool(
+        name = "files.index",
+        description = "(Re)index this device's text files into the local FTS5 index. Uses the configured roots unless `roots` is given. Set force=true to reindex unchanged files. Returns counts + elapsed_ms."
+    )]
+    async fn files_index(
+        &self,
+        Parameters(args): Parameters<FilesIndexIn>,
+    ) -> Result<CallToolResult, McpError> {
+        if !self.files_enabled {
+            return files_disabled_result();
+        }
+        let roots: Vec<std::path::PathBuf> = match args.roots {
+            Some(r) if !r.is_empty() => r.into_iter().map(std::path::PathBuf::from).collect(),
+            _ => self.files_roots.clone(),
+        };
+        let index = files::FilesIndex::new(self.files_index_path.clone());
+        run_blocking(move || index.index(&roots, args.force)).await
+    }
+
+    #[tool(
+        name = "files.status",
+        description = "File index status: configured roots, indexed file count, total bytes, last-indexed timestamp, enabled flag. Read-only."
+    )]
+    async fn files_status(
+        &self,
+        Parameters(_): Parameters<FilesStatusIn>,
+    ) -> Result<CallToolResult, McpError> {
+        let index = files::FilesIndex::new(self.files_index_path.clone());
+        let roots = self.files_roots.clone();
+        let enabled = self.files_enabled;
+        run_blocking(move || index.status(&roots, enabled)).await
+    }
 }
 
 #[tool_handler]
@@ -434,7 +524,7 @@ impl ServerHandler for UudaServer {
         .with_server_info(Implementation::from_build_env())
         .with_protocol_version(ProtocolVersion::V_2024_11_05)
         .with_instructions(
-            "UUDA per-device agent. Tools: system.health, system.metrics, system.logs, package.install, service.status. macOS Messages bridge (when enabled): messages.list, messages.thread, messages.poll, messages.send."
+            "UUDA per-device agent. Tools: system.health, system.metrics, system.logs, package.install, service.status. macOS Messages bridge (when enabled): messages.list, messages.thread, messages.poll, messages.send. File index (when enabled): files.search, files.index, files.status."
                 .to_string(),
         )
     }
@@ -457,6 +547,16 @@ fn messages_disabled() -> uc_toolkit::ToolError {
     uc_toolkit::ToolError::PermissionDenied(
         "messages bridge disabled on this device (set agent.messages_enabled = true)".into(),
     )
+}
+
+/// A non-error "files indexing disabled" result (a clear, machine-readable
+/// payload rather than an error envelope), so callers can degrade gracefully.
+fn files_disabled_result() -> Result<CallToolResult, McpError> {
+    let payload = serde_json::json!({
+        "enabled": false,
+        "message": "file index disabled on this device (set agent.files_enabled = true or UC_FILES_ENABLED=1)",
+    });
+    Ok(CallToolResult::success(vec![Content::text(payload.to_string())]))
 }
 
 /// Run a blocking toolkit read (SQLite) off the async runtime and shape the result.
@@ -497,6 +597,9 @@ mod messages_mcp_tests {
             false,
             messages_enabled,
             messages::default_db_path(),
+            false,
+            Vec::new(),
+            std::env::temp_dir().join("uuda-test-files-index.db"),
         )
     }
 
@@ -682,6 +785,9 @@ mod messages_http_e2e_tests {
                     false,
                     true,
                     db.clone(),
+                    false,
+                    Vec::new(),
+                    std::env::temp_dir().join("uuda-e2e-files-index.db"),
                 ))
             },
             LocalSessionManager::default().into(),

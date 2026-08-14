@@ -32,12 +32,17 @@ pub async fn run(cfg: Arc<Config>, ip: Ipv4Addr, sampler: Sampler) -> Result<()>
         .messages_db_path
         .clone()
         .unwrap_or_else(uc_toolkit::messages::default_db_path);
+    let files_enabled = cfg.files_enabled();
+    let files_roots = cfg.files_roots();
+    let files_index_path = cfg.files_index_path();
     let mcp_service = StreamableHttpService::new(
         {
             let sampler = sampler.clone();
             let agent_version = agent_version.clone();
             let state_dir = state_dir.clone();
             let messages_db_path = messages_db_path.clone();
+            let files_roots = files_roots.clone();
+            let files_index_path = files_index_path.clone();
             move || {
                 Ok(UudaServer::new(
                     sampler.clone(),
@@ -46,6 +51,9 @@ pub async fn run(cfg: Arc<Config>, ip: Ipv4Addr, sampler: Sampler) -> Result<()>
                     has_local_agent,
                     messages_enabled,
                     messages_db_path.clone(),
+                    files_enabled,
+                    files_roots.clone(),
+                    files_index_path.clone(),
                 ))
             }
         },

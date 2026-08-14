@@ -42,6 +42,17 @@ pub struct AgentSection {
     /// target user's home.
     #[serde(default)]
     pub messages_db_path: Option<PathBuf>,
+
+    /// Enable the on-device file index + search (files.* tools). Off by
+    /// default: indexing reads the user's files, so this is opt-in per device.
+    /// Overridable via the `UC_FILES_ENABLED` env var.
+    #[serde(default)]
+    pub files_enabled: bool,
+
+    /// Directories to index. Empty by default; nothing is indexed until set.
+    /// Overridable via `UC_FILES_ROOTS` (colon- or comma-separated dirs).
+    #[serde(default)]
+    pub files_roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -136,6 +147,37 @@ impl Config {
 
     pub fn registration_path(&self) -> PathBuf {
         self.paths.state_dir.join("registration.toml")
+    }
+
+    /// SQLite file backing the local file index, under the agent state dir.
+    pub fn files_index_path(&self) -> PathBuf {
+        self.paths.state_dir.join("files_index.db")
+    }
+
+    /// Whether the file index is enabled, with `UC_FILES_ENABLED` taking
+    /// precedence over the config flag (defaults OFF so the family is inert).
+    pub fn files_enabled(&self) -> bool {
+        match std::env::var("UC_FILES_ENABLED") {
+            Ok(v) => matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+            Err(_) => self.agent.files_enabled,
+        }
+    }
+
+    /// Resolved index roots: `UC_FILES_ROOTS` (colon- or comma-separated)
+    /// overrides the config list when set and non-empty.
+    pub fn files_roots(&self) -> Vec<PathBuf> {
+        if let Ok(raw) = std::env::var("UC_FILES_ROOTS") {
+            let roots: Vec<PathBuf> = raw
+                .split([':', ','])
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .collect();
+            if !roots.is_empty() {
+                return roots;
+            }
+        }
+        self.agent.files_roots.clone()
     }
 }
 
