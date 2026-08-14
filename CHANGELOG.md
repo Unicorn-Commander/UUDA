@@ -45,6 +45,17 @@ real hardware immediately paid for the probes.
   "it's bad now". Pruned on a retention window (default 90 days).
 - Control-plane tests 88 → 154.
 
+### Added — tools (`tools/`)
+- `fleet-health-check.sh` vendored into the repo. It is the agent-independent
+  fallback that runs on all 14 hosts, including the two that cannot take an
+  agent, and it had been living only in a home directory.
+- `uuda-liveness-watchdog.sh`: the drift scheduler only scans devices that
+  heartbeat within 90s, so a dead host leaves the fleet quietly and every check
+  goes green. This is the absence-of-signal alarm.
+- `pg-backup-unicorn.sh`: replaces a nightly backup that had been failing
+  silently since its script was renamed, leaving 14 production databases
+  unprotected.
+
 ### Added — release engineering
 - **CI** (`.forgejo/workflows/ci.yml`): the first CI in the repo. Rust job (fmt,
   clippy, `cargo test --workspace`) and Python job (pytest, deps pinned exactly),
@@ -82,6 +93,17 @@ real hardware immediately paid for the probes.
   observations): the scanner refuses any probe not classified READ and unknown
   tools default to MUTATING. The fail-safe was right, the policy table was just
   missing the new tools. `files.index` stays unlisted, since it writes.
+- **`container.images` counted lifetime restart churn as an active restart
+  loop.** Docker's `RestartCount` is cumulative and never decreases, so a
+  container that flapped once in April counted forever and a drift check built
+  on it could fire permanently without ever clearing. bigboy reported 6 while
+  docker reported zero containers restarting. Split into `high_restart_count`
+  (history) and `restarting_now` (`State == restarting`).
+- **`build.rs` baked a build-time path into the cached build-script binary.**
+  `env!("CARGO_MANIFEST_DIR")` resolves when the build script is compiled, so a
+  binary cached from a deleted git worktree kept pointing at a directory that no
+  longer existed and every later cross-build failed with "Could not make proto
+  path relative". Read the variable at runtime instead.
 - **`dpkg_lock_held_secs` is 0, not null, when the lock is free.** A drift check
   reading `dpkg_lock_held_secs <= 1800` ERRORed on every healthy host. Null now
   means only "held, age unknown".
