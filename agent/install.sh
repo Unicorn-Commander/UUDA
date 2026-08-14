@@ -25,7 +25,11 @@ PREFIX_BIN="/usr/local/libexec"
 PREFIX_CFG="/etc/uc-agent"
 PREFIX_STATE="/var/lib/uc-agent"
 PREFIX_CERT="/var/lib/uc-agent/certs"
-DEFAULT_BASE_URL="http://commander.unicorncommander.net:8084"
+# commander's MagicDNS name is its Headscale node name, srv981531. There is no
+# "commander" alias in the tailnet: `commander` and `commander.unicorncommander.net`
+# both NXDOMAIN, which silently broke every unattended install that took the default.
+# 100.79.41.137 is the fallback if MagicDNS is down.
+DEFAULT_BASE_URL="http://srv981531.unicorncommander.net:8084"
 
 log()  { printf "\033[1;36m[uc-agent]\033[0m %s\n" "$*"; }
 fail() { printf "\033[1;31m[uc-agent]\033[0m %s\n" "$*" >&2; exit 1; }
