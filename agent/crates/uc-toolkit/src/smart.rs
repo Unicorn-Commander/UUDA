@@ -696,8 +696,57 @@ pub async fn collect(opts: SmartOptions) -> ToolResult<SmartResult> {
     })
 }
 
+/// One `smartctl -i -H -A [-d TYPE] -j` attempt. `None` means the output was
+/// not parseable as smartctl JSON at all (no JSON support in this build).
+async fn read_with_type(
+    dev: &ScannedDevice,
+    dev_type: Option<&str>,
+    timeout: Duration,
+) -> Option<SmartReadings> {
+    let mut args: Vec<&str> = vec!["-i", "-H", "-A"];
+    if let Some(t) = dev_type {
+        args.push("-d");
+        args.push(t);
+    }
+    args.push("-j");
+    args.push(&dev.path);
+    match exec::run("smartctl", &args, timeout).await {
+        Ok(out) => parse_smartctl_json(&out.stdout),
+        Err(_) => None,
+    }
+}
+
 /// Read one device: JSON first, text fallback second.
 async fn read_one(dev: &ScannedDevice, block: Option<&BlockDevice>, timeout: Duration) -> SmartDisk {
+    // Try smartctl's own auto-detection first, and only then the type that
+    // `--scan` suggested.
+    //
+    // On any host where SATA disks hang off a SAS HBA or expander, `--scan`
+    // reports `type=scsi`. Passing `-d scsi` makes smartctl read SCSI mode
+    // pages, and `ata_smart_attributes` disappears completely -- so every raw
+    // counter we care about (pending, uncorrectable, reallocated, CRC) comes
+    // back null and the disk reports UNKNOWN. Auto-detect resolves the SAT
+    // translation and returns the real ATA attributes. Verified on rackboy1,
+    // where all four SSDs scan as `scsi`; bigboy's pool disks are likewise
+    // expander-attached.
+    let mut readings = read_with_type(dev, None, timeout).await;
+    if readings.as_ref().map(is_blank).unwrap_or(true) {
+        if let Some(t) = dev.dev_type.as_deref() {
+            if let Some(r) = read_with_type(dev, Some(t), timeout).await {
+                if !is_blank(&r) {
+                    readings = Some(r);
+                }
+            }
+        }
+    }
+    if let Some(r) = readings {
+        if !is_blank(&r) {
+            return build_disk(&dev.path, &r, block, None);
+        }
+    }
+
+    // Both attempts were blank: fall through to the original path so the
+    // failure hint and text-mode fallback still apply.
     let mut args: Vec<&str> = vec!["-i", "-H", "-A"];
     if let Some(t) = dev.dev_type.as_deref() {
         args.push("-d");
