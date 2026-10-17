@@ -296,6 +296,184 @@ if command -v docker >/dev/null 2>&1; then
 fi
 
 # =====================================================================
+# 7. Containers - restart loops and wedged creations
+# =====================================================================
+# Added 2026-09-15. A restart loop is how one dead dependency silently takes
+# down everything that needs it: a corrupt Redis AOF put thirteen containers
+# into Restarting for 27 hours, across a clean reboot, and the only outward
+# symptom was one hostname serving Traefik's default 404. `docker ps` alone
+# looks fine, because a restarting container is not "running" and simply
+# vanishes from the default listing.
+CONT_RUNNING=-1
+CONT_BAD=0
+CONT_RESTARTING=0
+JCONT=""
+CONT_NAMES=""
+if command -v docker >/dev/null 2>&1; then
+  crun=$($T docker ps -q 2>/dev/null | grep -c .)
+  CONT_RUNNING=$(num "$crun")
+  cbad=$($T docker ps -a --format '{{.Names}}|{{.Status}}' 2>/dev/null \
+         | grep -E '\|(Restarting|Created)' | head -25)
+  if [ -n "$cbad" ]; then
+    while IFS='|' read -r cname cstat; do
+      [ -z "$cname" ] && continue
+      CONT_BAD=$((CONT_BAD + 1))
+      case "$cstat" in Restarting*) CONT_RESTARTING=$((CONT_RESTARTING + 1)) ;; esac
+      [ -n "$JCONT" ] && JCONT="$JCONT,"
+      JCONT="$JCONT{\"name\":\"$(jesc "$cname")\",\"state\":\"$(jesc "$cstat")\"}"
+      if [ -z "$CONT_NAMES" ]; then CONT_NAMES="$cname"
+      else CONT_NAMES="$CONT_NAMES,$cname"; fi
+    done <<< "$cbad"
+  fi
+  if [ "$CONT_RESTARTING" -gt 0 ]; then
+    note CRIT "$CONT_RESTARTING container(s) restarting: $CONT_NAMES"
+  elif [ "$CONT_BAD" -gt 0 ]; then
+    # A container wedged in Created is a deploy that never started - it needs a
+    # human, but nothing is flapping, so it is not an outage.
+    note WARN "$CONT_BAD container(s) stuck in Created: $CONT_NAMES"
+  fi
+fi
+[ -z "$JCONT" ] && JCONT="[]"
+
+# =====================================================================
+# 8. TLS certificates in the local ACME store (routing-aware)
+# =====================================================================
+# Added 2026-09-15 after ten certificates were found expired across the fleet,
+# one of them by 281 days, on customer-facing hostnames - while every page
+# still looked perfect. Cloudflare terminates TLS with its OWN valid edge
+# certificate and every zone is "Full" rather than "Full (strict)", so it never
+# validates the origin certificate at all. Checking the public URL proves
+# nothing; the only way to see this is to read the origin's own store.
+#
+# ROUTING-AWARE ON PURPOSE: a certificate only matters if this host still
+# serves that hostname. An ACME store accumulates entries for names that moved
+# to another origin long ago and Traefik retries them forever; on bigboy every
+# single failing certificate was one of those eight. Raising them would teach
+# everyone to ignore this check, so unrouted names are counted separately and
+# never alert.
+#
+# The helper emits shell-safe KEY=VALUE lines rather than JSON: parsing JSON
+# with sed in bash breaks on the first embedded quote or bracket, and a monitor
+# that misparses its own input is worse than one that does not run.
+CERT_STATE=absent
+CERT_TOTAL=0
+CERT_EXPIRED=0
+CERT_SOON=0
+CERT_STALE=0
+CERT_HTTP01=0
+CERT_MSG=""
+JCERT="[]"
+# Helper location differs by install mode: root hosts get /usr/local/lib,
+# while commander and centerdeep run this as `muut` from ~/.local and cannot
+# write there. Search rather than assume - a hardcoded path would silently
+# disable the whole cert check on exactly the host that had the expired one.
+if [ -z "${CERT_HELPER:-}" ]; then
+  for _ch in /usr/local/lib/fleet-health-certs.py "$HOME/.local/lib/fleet-health-certs.py"; do
+    [ -r "$_ch" ] && { CERT_HELPER="$_ch"; break; }
+  done
+fi
+CERT_HELPER=${CERT_HELPER:-/usr/local/lib/fleet-health-certs.py}
+if command -v docker >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 \
+   && [ -r "$CERT_HELPER" ]; then
+  if $T docker ps --format '{{.Names}}' 2>/dev/null | grep -qi traefik; then
+    certout=$(CERT_WARN_DAYS="${CERT_WARN_DAYS:-21}" timeout 60 python3 "$CERT_HELPER" 2>/dev/null)
+    if [ -n "$certout" ]; then
+      while IFS='=' read -r ck cv; do
+        case "$ck" in
+          CERT_STATE)    CERT_STATE="$cv" ;;
+          CERT_TOTAL)    CERT_TOTAL=$(num "$cv") ;;
+          CERT_EXPIRED)  CERT_EXPIRED=$(num "$cv") ;;
+          CERT_SOON)     CERT_SOON=$(num "$cv") ;;
+          CERT_STALE)    CERT_STALE=$(num "$cv") ;;
+          CERT_HTTP01)   CERT_HTTP01=$(num "$cv") ;;
+          CERT_MSG_B64)  CERT_MSG=$(printf '%s' "$cv" | base64 -d 2>/dev/null) ;;
+          CERT_ITEMS_B64) JCERT=$(printf '%s' "$cv" | base64 -d 2>/dev/null) ;;
+        esac
+      done <<< "$certout"
+      [ -z "$JCERT" ] && JCERT="[]"
+      if [ "$CERT_EXPIRED" -gt 0 ]; then
+        note CRIT "$CERT_EXPIRED routed TLS cert(s) EXPIRED: $CERT_MSG"
+      elif [ "$CERT_SOON" -gt 0 ]; then
+        note WARN "$CERT_SOON routed TLS cert(s) expire within ${CERT_WARN_DAYS:-21}d: $CERT_MSG"
+      fi
+      # HTTP-01 behind the Cloudflare proxy renews nothing, silently, until
+      # certificates start expiring. Worth saying out loud even while every
+      # routed certificate is still valid.
+      [ "$CERT_HTTP01" -gt 0 ] 2>/dev/null && \
+        note WARN "$CERT_HTTP01 ACME resolver(s) still on httpChallenge (cannot validate behind the CF proxy)"
+    else
+      CERT_STATE=unreadable
+      note WARN "traefik present but ACME store unreadable - certs unmonitored"
+    fi
+  fi
+fi
+
+# =====================================================================
+# 9. Public endpoint probe (opt-in, one host)
+# =====================================================================
+# ENDPOINT_PROBE=1 plus ENDPOINT_LIST=/path/to/hostnames in the conf. Off by
+# default and deliberately enabled on ONE host: probing the same 50 hostnames
+# from twelve hosts every 15 minutes is hundreds of requests an hour to prove
+# one fact. This is the end-to-end view - it goes through Cloudflare, so it
+# sees what a customer sees, which is exactly what section 8 cannot tell you.
+EP_CHECKED=0
+EP_BAD=0
+EP_NAMES=""
+JEP="[]"
+if [ "${ENDPOINT_PROBE:-0}" = 1 ] && [ -n "${ENDPOINT_LIST:-}" ] && [ -r "${ENDPOINT_LIST}" ] \
+   && command -v curl >/dev/null 2>&1; then
+  eplist=$(grep -vE '^[[:space:]]*(#|$)' "$ENDPOINT_LIST" 2>/dev/null | head -"${ENDPOINT_MAX:-60}")
+  if [ -n "$eplist" ]; then
+    epres=$(printf '%s\n' "$eplist" | timeout 120 xargs -r -P "${ENDPOINT_PAR:-10}" -I{} \
+      sh -c 'printf "%s %s\n" "$1" "$(curl -s -o /dev/null -m 6 -w "%{http_code}" "https://$1/" 2>/dev/null || echo 000)"' _ {} 2>/dev/null)
+    JEPB=""
+    while read -r ephost epcode; do
+      [ -z "$ephost" ] && continue
+      EP_CHECKED=$((EP_CHECKED + 1))
+      case "$epcode" in
+        000|502|503|504)
+          EP_BAD=$((EP_BAD + 1))
+          [ -n "$JEPB" ] && JEPB="$JEPB,"
+          JEPB="$JEPB{\"host\":\"$(jesc "$ephost")\",\"code\":\"$(jesc "$epcode")\"}"
+          if [ -z "$EP_NAMES" ]; then EP_NAMES="$ephost($epcode)"
+          else EP_NAMES="$EP_NAMES,$ephost($epcode)"; fi
+          ;;
+      esac
+    done <<< "$epres"
+    [ -n "$JEPB" ] && JEP="[$JEPB]"
+    [ "$EP_BAD" -gt 0 ] && note CRIT "$EP_BAD/$EP_CHECKED public endpoint(s) not serving: $EP_NAMES"
+  fi
+fi
+
+# =====================================================================
+# 9b. Internal service probe (opt-in, one host)
+# =====================================================================
+# SERVICE_LIST=/path/to/file in the conf: one "name url" per line, probed over
+# the tailnet. Section 9 only sees public hostnames through Cloudflare, so a
+# GPU box that drops off the LAN (2026-10-17: midboy1+2 knocked onto the wrong
+# VLAN, every house STT path dead for an evening) was invisible to it.
+SVC_CHECKED=0
+SVC_BAD=0
+SVC_NAMES=""
+if [ -n "${SERVICE_LIST:-}" ] && [ -r "${SERVICE_LIST}" ] && command -v curl >/dev/null 2>&1; then
+  while read -r svname svurl; do
+    [ -z "$svname" ] && continue
+    case "$svname" in \#*) continue ;; esac
+    SVC_CHECKED=$((SVC_CHECKED + 1))
+    svcode=$(curl -s -o /dev/null -m 8 -w "%{http_code}" "$svurl" 2>/dev/null)
+    case "$svcode" in
+      2*|3*|401|403|404|405) ;;
+      *)
+        SVC_BAD=$((SVC_BAD + 1))
+        if [ -z "$SVC_NAMES" ]; then SVC_NAMES="$svname(${svcode:-000})"
+        else SVC_NAMES="$SVC_NAMES,$svname(${svcode:-000})"; fi
+        ;;
+    esac
+  done < <(grep -vE '^[[:space:]]*(#|$)' "$SERVICE_LIST" 2>/dev/null)
+  [ "$SVC_BAD" -gt 0 ] && note CRIT "internal service down: $SVC_NAMES"
+fi
+
+# =====================================================================
 # Emit
 # =====================================================================
 HOST=$(hostname)
@@ -310,7 +488,10 @@ JSON="$JSON,\"zfs\":{\"state\":\"$ZFS_STATE\",\"pools\":[$JZPOOL]}"
 JSON="$JSON,\"updates\":{\"apt_age_h\":$APT_AGE,\"unattended_age_h\":$UU_AGE,\"lock_age_s\":$LOCK_AGE,\"lock_cmd\":\"$(jesc "$LOCK_CMD")\",\"lock_src\":\"$LOCK_SRC\",\"stuck_unit\":\"$(jesc "$UNIT_STUCK")\",\"stuck_unit_age_s\":$UNIT_STUCK_AGE}"
 JSON="$JSON,\"dstate\":{\"count\":$DSTATE,\"procs\":\"$(jesc "$DPROCS")\"}"
 JSON="$JSON,\"fs_alerts\":[$JFS]"
-JSON="$JSON,\"docker\":{\"running\":$DOCK_RUNNING,\"floating_tags\":$DOCK_FLOAT}}"
+JSON="$JSON,\"docker\":{\"running\":$DOCK_RUNNING,\"floating_tags\":$DOCK_FLOAT}"
+JSON="$JSON,\"containers\":{\"running\":$CONT_RUNNING,\"bad\":$CONT_BAD,\"restarting\":$CONT_RESTARTING,\"items\":$JCONT}"
+JSON="$JSON,\"certs\":{\"state\":\"$(jesc "$CERT_STATE")\",\"total\":$CERT_TOTAL,\"expired\":$CERT_EXPIRED,\"soon\":$CERT_SOON,\"stale_unrouted\":$CERT_STALE,\"http01_resolvers\":$CERT_HTTP01,\"items\":$JCERT}"
+JSON="$JSON,\"endpoints\":{\"checked\":$EP_CHECKED,\"bad\":$EP_BAD,\"items\":$JEP}}"
 
 printf '%s\n' "$JSON"
 
@@ -348,13 +529,23 @@ if [ "${NO_SINK:-0}" != 1 ]; then
     if [ -r "$STATEF" ]; then
       PREV=$(cut -f1 "$STATEF" 2>/dev/null)
       LAST=$(num "$(cut -f2 "$STATEF" 2>/dev/null)")
+      PREVSIG=$(cut -f3 "$STATEF" 2>/dev/null)
     fi
+    # Signature of WHICH CRIT conditions are present, with counts masked so a
+    # climbing sector count is not "new". A host that sits in CRIT for weeks
+    # (bigboy's dying disks) used to swallow every new CRIT until the re-nag;
+    # now a new reason mails on its own.
+    SIG=$(printf '%s' "$MSGS" | tr ';' '\n' | sed -n 's/^ *CRIT: *//p' \
+          | sed -E 's/=[0-9]+/=N/g; s/[0-9]+\/[0-9]+/N\/N/g; s/[0-9]+%/N%/g; s/\([0-9]{3}\)//g' \
+          | sort -u | md5sum | cut -c1-12)
     NOWS=$(date +%s)
     REPEAT=${ALERT_REPEAT_S:-21600}
     SEND=0; SUBJ=""
     if [ "$STATUS" = CRIT ]; then
       if [ "$PREV" != CRIT ]; then
         SEND=1; SUBJ="[fleet-health] CRIT on $HOST"
+      elif [ -n "$PREVSIG" ] && [ "$SIG" != "$PREVSIG" ]; then
+        SEND=1; SUBJ="[fleet-health] CRIT changed on $HOST"
       elif [ $((NOWS - LAST)) -ge "$REPEAT" ]; then
         SEND=1; SUBJ="[fleet-health] STILL CRIT on $HOST"
       fi
@@ -363,9 +554,23 @@ if [ "${NO_SINK:-0}" != 1 ]; then
     fi
 
     if [ "$SEND" = 1 ]; then
+      # Default the queue next to the LOGFILE rather than to /var/lib: on
+      # commander and centerdeep this runs as `muut`, which cannot write
+      # /var/lib/fleet-health, and the append would fail silently - leaving the
+      # two hosts that most need triage with an empty queue.
+      QUEUE=${TRIAGE_QUEUE:-$(dirname "$LOGFILE")/triage-queue.jsonl}
+      mkdir -p "$(dirname "$QUEUE")" 2>/dev/null || true
+      printf '{"ts":"%s","host":"%s","status":"%s","subj":"%s","msg":"%s"}\n' \
+        "$TS" "$(jesc "$HOST")" "$STATUS" "$(jesc "$SUBJ")" "$(jesc "$MSGS")" \
+        >> "$QUEUE" 2>/dev/null || true
+      chmod 0644 "$QUEUE" 2>/dev/null || true
+      # Keep the queue bounded; The Colonel only ever needs the recent tail.
+      if [ "$(wc -l < "$QUEUE" 2>/dev/null || echo 0)" -gt 500 ]; then
+        tail -200 "$QUEUE" > "$QUEUE.tmp" 2>/dev/null && mv -f "$QUEUE.tmp" "$QUEUE" 2>/dev/null
+      fi
       EML=$(mktemp 2>/dev/null || echo /tmp/fh-alert.$$)
       {
-        printf 'From: Fleet Health <%s>\r\n' "${SMTP_FROM:-$SMTP_USER}"
+        printf 'From: The Colonel (fleet watch) <%s>\r\n' "${SMTP_FROM:-$SMTP_USER}"
         printf 'To: %s\r\n' "$ALERT_EMAIL"
         printf 'Subject: %s\r\n' "$SUBJ"
         printf 'Date: %s\r\n' "$(date -R)"
@@ -379,13 +584,15 @@ if [ "${NO_SINK:-0}" != 1 ]; then
         # so re-terminate each line explicitly.
         printf '%s' "$MSGS" | tr ';' '\n' | sed -e 's/^ *//' -e 's/$/\r/'
         printf '\r\nFull JSON: %s on %s\r\n' "$LOGFILE" "$HOST"
+        printf 'Reported by The Colonel, the standing fleet watch. This is a\r\n'
+        printf 'sensor reading, not a diagnosis, and nothing has been changed.\r\n'
       } > "$EML" 2>/dev/null
       CURLERR=$($T curl -sS --ssl-reqd --url "$SMTP_URL" \
              --user "$SMTP_USER:$SMTP_PASS" \
              --mail-from "${SMTP_FROM:-$SMTP_USER}" --mail-rcpt "$ALERT_EMAIL" \
              -T "$EML" 2>&1 >/dev/null)
       if [ $? -eq 0 ]; then
-        printf '%s\t%s\n' "$STATUS" "$NOWS" > "$STATEF" 2>/dev/null || true
+        printf '%s\t%s\t%s\n' "$STATUS" "$NOWS" "$SIG" > "$STATEF" 2>/dev/null || true
         logger -t fleet-health -p daemon.notice -- "alert mailed: $SUBJ" 2>/dev/null
       else
         # Do NOT record state on failure, so the next run retries the alert.
@@ -396,7 +603,7 @@ if [ "${NO_SINK:-0}" != 1 ]; then
       fi
       rm -f "$EML" 2>/dev/null || true
     else
-      printf '%s\t%s\n' "$STATUS" "${LAST:-0}" > "$STATEF" 2>/dev/null || true
+      printf '%s\t%s\t%s\n' "$STATUS" "${LAST:-0}" "$SIG" > "$STATEF" 2>/dev/null || true
     fi
   fi
 fi
