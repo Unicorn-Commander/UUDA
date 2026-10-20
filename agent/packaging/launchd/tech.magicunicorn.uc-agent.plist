@@ -19,6 +19,13 @@
     <dict>
         <key>UC_AGENT_CONFIG</key>
         <string>/etc/uc-agent/config.toml</string>
+        <!-- launchd gives system daemons a bare PATH (/usr/bin:/bin:/usr/sbin:/sbin).
+             The agent shells out to `tailscale`, which Homebrew puts in /usr/local/bin
+             (Intel) or /opt/homebrew/bin (Apple Silicon). Without this the agent exits
+             with "could not invoke tailscale" on every start. Found on the first real
+             macOS install, 2026-10-20. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>RUST_LOG</key>
         <string>info</string>
     </dict>
