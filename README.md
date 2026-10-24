@@ -440,7 +440,7 @@ Report a vulnerability privately to **security@magicunicorn.tech**. Please do no
 
 ## Licence
 
-The agent (`agent/`) and the protocol (`proto/`) are [Apache License 2.0](LICENSE-APACHE).
+The agent (`agent/`) and the protocol (`proto/`) are [Apache License 2.0](LICENSE-APACHE). Our names and logos are covered by [TRADEMARKS.md](TRADEMARKS.md).
 
 The control plane that manages the fleet is a commercial component of Unicorn Commander's Ops-Center. It is licensed separately and is not part of this repository.
 
