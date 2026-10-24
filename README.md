@@ -142,7 +142,7 @@ There is no separate agent-to-agent endpoint in this repository. Call MCP on the
 
 **Through the control plane**
 
-The gateway source is in [`control-plane/ops-center-patch/backend/routers/`](control-plane/ops-center-patch/backend/routers/), for mounting into Ops-Center. Admin authentication delegates to the host application's `require_admin` function. This repository does not implement that login. The local harness stubs it with an `X-Uuda-Actor` header so different admin identities can be simulated. That header is a harness convention, not production authentication.
+The gateway is part of the commercial control plane, which runs inside Unicorn Commander's Ops-Center and is not included in this public repository. Admin authentication delegates to the host application. The routes below are the gateway's public contract.
 
 | Method and path | Body | Effect |
 |---|---|---|
@@ -209,15 +209,11 @@ python3 test/harness/mcp_probe.py \
 - For an installed service: the Tailscale CLI, connected (`tailscale ip --4`), root, and a single-use bootstrap token issued for the device's registration hostname by the UUDA control plane in Ops-Center.
 - An Ops-Center base URL you pass yourself. Always pass `--base-url`. The install script contains a built-in default that is not a public address.
 
-The commercial control plane issues the token and signs the CSR. Its source is included under [`control-plane/ops-center-patch/`](control-plane/ops-center-patch/), with routers and SQL migrations for an authorized Ops-Center deployment. Apply the migrations in filename order and include all router dependencies, including `uuda_auth.py`, when integrating the patch. The [patch guide](control-plane/ops-center-patch/README.md) describes integration; its deployment snapshots are historical, not a statement about your running instance.
+The commercial control plane issues the token and signs the CSR. It ships with Unicorn Commander's Ops-Center under a separate commercial licence and is not part of this repository.
 
 ### Docker harness
 
-[`test/harness/`](test/harness/README.md) defines a Docker stack with Postgres, a small API process, and a Linux build of `uc-agent`. The compose file bind-mounts the included commercial control-plane routers. At HEAD it omits `uuda_auth.py`, which those routers import, so the API cannot start as checked in. Before running either smoke script, add this entry to `ops-center-mini.volumes` in `test/harness/docker-compose.yml`:
-
-```yaml
-- ../../control-plane/ops-center-patch/backend/routers/uuda_auth.py:/app/routers/uuda_auth.py:ro
-```
+[`test/harness/`](test/harness/README.md) defines a Docker stack with Postgres, a small API process, and a Linux build of `uc-agent`. The full governed-loop smoke test mounts the commercial control-plane routers, which are not in this public repository; with them absent you can still build the agent and run its unit and integration tests.
 
 On a Linux host, build the target that matches the machine (`x86_64-unknown-linux-gnu` or `aarch64-unknown-linux-gnu`, both listed in the toolchain file). [`agent/.cargo/config.toml`](agent/.cargo/config.toml) sets the x86_64 Linux linker to `x86_64-linux-gnu-gcc`.
 
@@ -381,13 +377,13 @@ flowchart LR
 | `uc-toolkit` | Tool code: health, logs, packages, services, probes, files, messages, briefs. The four fleet-health probes use a timed command executor with stdin from `/dev/null`; package, service, log, and Messages commands do not use that executor. |
 | `uc-types` | Rust types generated from `proto/uc/v1` at build time (`prost` and `pbjson`). |
 | `proto/uc/v1` | Wire schema shared with the control plane: errors, registration and heartbeat, and the original tool messages. Package `uc.v1`. |
-| `control-plane/ops-center-patch/` | Proprietary backend patch for Ops-Center: inventory, gateway, policy, approvals, tenancy, desired-state checks, scheduler, and audit tables. The scheduler observes devices without remediating and is off until enabled; it writes history and can send alerts. |
+| Control plane (commercial, not in this repository) | Runs inside Ops-Center: inventory, gateway, policy, approvals, tenancy, desired-state checks, scheduler, and audit tables. |
 | Tailscale | The normal bind address and gateway route. Installation with `install.sh` requires a successful `tailscale ip --4` check. |
 | On-device assistant | Not in this repository. It reads `brief.json` and writes `report.json` when squad mode is on. |
 
 A `.deb` builder ([`agent/packaging/build-deb.sh`](agent/packaging/build-deb.sh)) and a macOS sign-and-notarize script ([`agent/packaging/sign-macos.sh`](agent/packaging/sign-macos.sh)) sit next to the systemd unit and the launchd plist. The package leaves a stopped service stopped; upgrades can restart an already active service. First startup needs a populated configuration and registration token.
 
-For the repository map: [`agent/`](agent/) contains the Rust workspace, [`proto/`](proto/) the protobuf contracts, [`control-plane/`](control-plane/) the Ops-Center patch, and [`test/harness/`](test/harness/) the integration drivers. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/TOOL_SURFACE.md`](docs/TOOL_SURFACE.md), and `docs/ROADMAP.md` preserve the design history, including proposed tools and platforms beyond the implementation here. The eighteen-tool list above describes the current router; Windows, the proposed `uc-cli`, and the recipe runner are not implemented in this checkout.
+For the repository map: [`agent/`](agent/) contains the Rust workspace, [`proto/`](proto/) the protobuf contracts, and [`test/harness/`](test/harness/) the integration drivers. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/TOOL_SURFACE.md`](docs/TOOL_SURFACE.md), and `docs/ROADMAP.md` preserve the design history, including proposed tools and platforms beyond the implementation here. The eighteen-tool list above describes the current router; Windows, the proposed `uc-cli`, and the recipe runner are not implemented in this checkout.
 
 ## Part of Unicorn Commander
 
@@ -423,7 +419,7 @@ cargo clippy --workspace --all-targets
 cargo test --workspace
 ```
 
-The workspace defines 77 Rust test functions, including platform-gated tests. The same workflow unconditionally runs a Python job for the included commercial control plane, whose test files define 154 test functions. These are source counts, not test-run results.
+The workspace defines 77 Rust test functions, including platform-gated tests. These are source counts, not test-run results.
 
 Linux packages, from the repository root with `dpkg-deb` installed and an already built ELF binary matching the requested architecture:
 
@@ -446,7 +442,7 @@ Report a vulnerability privately to **security@magicunicorn.tech**. Please do no
 
 The agent (`agent/`) and the protocol (`proto/`) are [Apache License 2.0](LICENSE-APACHE).
 
-The [`control-plane/`](control-plane/) source is included for inspection under [LICENSE-PROPRIETARY](LICENSE-PROPRIETARY). Its use, modification, and deployment require an authorized Ops-Center deployment under a separate commercial agreement; source visibility does not grant the agent's Apache-2.0 permissions to the control plane.
+The control plane that manages the fleet is a commercial component of Unicorn Commander's Ops-Center. It is licensed separately and is not part of this repository.
 
 <p align="center">
   Built by <a href="https://magicunicorn.tech">Magic Unicorn</a> · part of <a href="https://unicorncommander.ai">Unicorn Commander</a>
